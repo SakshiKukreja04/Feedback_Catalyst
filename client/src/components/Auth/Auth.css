@@ -1,0 +1,165 @@
+.auth-container {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #b3e0fc;
+  padding: 0;
+}
+
+.auth-card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+  width: 100%;
+  max-width: 420px;
+  padding: 2rem 1.5rem 1.5rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.auth-card h2 {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  color: #222;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-top: 0;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.form-group label {
+  font-size: 0.97rem;
+  font-weight: 500;
+  color: #222;
+  margin-left: 0.1rem;
+}
+
+.form-group input {
+  padding: 0.7rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  font-size: 1rem;
+  background: #f6f6f6;
+  color: #222;
+  transition: box-shadow 0.2s, border 0.2s;
+  box-shadow: none;
+}
+
+.form-group input:focus {
+  outline: none;
+  border: 1.5px solid #0099cc;
+  background: #f7faff;
+}
+
+.form-group input:disabled {
+  background: #f1f1f1;
+  color: #aaa;
+}
+
+.auth-form button.btn-primary {
+  margin-top: 0.5rem;
+  padding: 0.7rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 999px;
+  background: #0099cc;
+  color: #fff;
+  border: 1px solid #ccc;
+  transition: background 0.2s, border 0.2s;
+  width: 100%;
+}
+
+.auth-form button.btn-primary:disabled {
+  background: #a5c3fa;
+  color: #fff;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 1.1rem 0 1rem 0;
+}
+.divider::before, .divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1.5px solid #e0e0e0;
+}
+.divider:not(:empty)::before {
+  margin-right: 0.75em;
+}
+.divider:not(:empty)::after {
+  margin-left: 0.75em;
+}
+
+.error-message {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 0.7rem 1rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  text-align: center;
+  border: 1px solid #fecaca;
+  font-weight: 500;
+}
+
+.signup-google-btn {
+  border: 1.5px solid #e0e0e0;
+  background: #fff;
+  color: #757575;
+  padding: 0.7rem 1rem;
+  font-size: 1rem;
+  font-weight: 500;
+  width: 100%;
+  border-radius: 999px;
+  box-shadow: none;
+  transition: border 0.2s, background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+}
+.signup-google-btn:hover {
+  border: 1.5px solid #0099cc;
+  background: #f7faff;
+  color: #0099cc;
+}
+
+.signup-google-btn img {
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+}
+
+/* Remove Facebook button styles if present */
+.btn-facebook, .login-facebook-btn {
+  display: none !important;
+}
+
+/* Remove extra spacing for Facebook button */
+.signup-google-btn + .btn-facebook {
+  margin-top: 0 !important;
+}
+
+/* Responsive: keep card small and centered */
+@media (max-width: 500px) {
+  .auth-card {
+    padding: 1.2rem 0.5rem 1.5rem 0.5rem;
+    max-width: 98vw;
+  }
+} 
