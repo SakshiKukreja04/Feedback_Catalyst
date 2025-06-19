@@ -22,6 +22,12 @@ const Header = ({ isAuthenticated, hideNavButtons, transparentBg }) => {
         </div>
         {!hideNavButtons && (
           <nav className="nav-buttons">
+            <button 
+              className="btn-secondary"
+              onClick={() => navigate('/report')}
+            >
+              Generate Report
+            </button>
             {isAuthenticated ? (
               <div className="profile-logout-stack">
                 <img src={PROFILE_IMG} alt="Profile" className="profile-img" />

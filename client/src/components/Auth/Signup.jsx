@@ -81,85 +81,84 @@ const Signup = ({ onAuth }) => {
   return (
     <>
       <Header hideNavButtons transparentBg={true} />
-      <div className="auth-container">
-        <div className="auth-card">
-          <h2>Create an Account</h2>
-          {error && <div className="error-message">{error}</div>}
-          <form onSubmit={handleSubmit} className="auth-form">
-            <div className="form-group">
-              <label htmlFor="name">Full Name</label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                value={formData.name}
-                onChange={handleChange}
-                required
+      <div className="signup-centered-outer">
+        <div className="signup-centered-block">
+          <div className="login-image-block" role="img" aria-label="Analytics Illustration" />
+          <div className="login-centered-form">
+            <h2>Create an Account</h2>
+            {error && <div className="error-message">{error}</div>}
+            <form onSubmit={handleSubmit} className="auth-form">
+              <div className="form-group">
+                <label htmlFor="name">Full Name</label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleChange}
+                  required
+                  disabled={isLoading}
+                  placeholder="Enter your full name"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="email">Email Address</label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  required
+                  disabled={isLoading}
+                  placeholder="Enter your email address"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="password">Password</label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  required
+                  disabled={isLoading}
+                  placeholder="Enter your password"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="confirmPassword">Confirm Password</label>
+                <input
+                  type="password"
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  value={formData.confirmPassword}
+                  onChange={handleChange}
+                  required
+                  disabled={isLoading}
+                  placeholder="Confirm your password"
+                />
+              </div>
+              <button 
+                type="submit" 
+                className="btn-primary"
                 disabled={isLoading}
-                className="signup-input"
-                placeholder="Enter your full name"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="email">Email Address</label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                required
-                disabled={isLoading}
-                className="signup-input"
-                placeholder="Enter your email address"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="password">Password</label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                disabled={isLoading}
-                className="signup-input"
-                placeholder="Enter your password"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="confirmPassword">Confirm Password</label>
-              <input
-                type="password"
-                id="confirmPassword"
-                name="confirmPassword"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                required
-                disabled={isLoading}
-                className="signup-input"
-                placeholder="Confirm your password"
-              />
-            </div>
+              >
+                {isLoading ? 'Creating Account...' : 'Sign Up'}
+              </button>
+            </form>
+            <div className="divider"></div>
             <button 
-              type="submit" 
-              className="btn-primary"
+              type="button" 
+              className="btn-google signup-google-btn"
+              onClick={handleGoogleSignIn}
               disabled={isLoading}
             >
-              {isLoading ? 'Creating Account...' : 'Sign Up'}
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" />
+              Continue with Google
             </button>
-          </form>
-          <div className="divider"></div>
-          <button 
-            type="button" 
-            className="btn-google signup-google-btn"
-            onClick={handleGoogleSignIn}
-            disabled={isLoading}
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" />
-            Continue with Google
-          </button>
+          </div>
         </div>
       </div>
     </>

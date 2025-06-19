@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../../firebase';
-import './Auth.css';
+import Header from '../Header/Header';
+import './Login.css';
 
 const Login = ({ onAuth }) => {
   const navigate = useNavigate();
@@ -57,53 +58,62 @@ const Login = ({ onAuth }) => {
   };
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
-        <h2>Login to Feedback Catalyst</h2>
-        {error && <div className="error-message">{error}</div>}
-        <form onSubmit={handleSubmit} className="auth-form">
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
-            <input
-              type="email"
-              id="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              required
+    <>
+      <Header hideNavButtons transparentBg={true} />
+      <div className="login-centered-outer">
+        <div className="login-centered-block">
+          <div className="login-image-block" role="img" aria-label="Analytics Illustration" />
+          <div className="login-centered-form">
+            <h2>Login to Feedback Catalyst</h2>
+            {error && <div className="error-message">{error}</div>}
+            <form onSubmit={handleSubmit} className="login-form">
+              <div className="form-group">
+                <label htmlFor="email">Email</label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  placeholder="Enter your email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  required
+                  disabled={isLoading}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="password">Password</label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  placeholder="Enter your password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  required
+                  disabled={isLoading}
+                />
+              </div>
+              <button 
+                type="submit" 
+                className="btn-primary"
+                disabled={isLoading}
+              >
+                {isLoading ? 'Logging in...' : 'Login'}
+              </button>
+            </form>
+            <button 
+              type="button" 
+              className="login-google-btn"
+              onClick={handleGoogleSignIn}
               disabled={isLoading}
-            />
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" />
+              Continue with Google
+            </button>
           </div>
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-              disabled={isLoading}
-            />
-          </div>
-          <button 
-            type="submit" 
-            className="btn-primary"
-            disabled={isLoading}
-          >
-            {isLoading ? 'Logging in...' : 'Login'}
-          </button>
-        </form>
-        <button 
-          type="button" 
-          className="btn-google"
-          onClick={handleGoogleSignIn}
-          disabled={isLoading}
-        >
-          Continue with Google
-        </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 

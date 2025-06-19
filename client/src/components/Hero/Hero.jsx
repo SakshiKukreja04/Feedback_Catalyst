@@ -1,10 +1,12 @@
 import React, { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './Hero.css';
 
 const Hero = () => {
   const fileInputRef = useRef(null);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const navigate = useNavigate();
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -43,6 +45,11 @@ const Hero = () => {
       }
 
       setUploadStatus({ type: 'success', message: 'File uploaded successfully!' });
+      
+      // Redirect to report page after successful upload
+      setTimeout(() => {
+        navigate('/report');
+      }, 1500);
     } catch (error) {
       setUploadStatus({ type: 'error', message: error.message });
     } finally {
@@ -80,7 +87,12 @@ const Hero = () => {
               accept=".csv,.xlsx"
               style={{ display: 'none' }}
             />
-            <button className="btn-secondary get-analysis-btn">Get Analysis</button>
+            <button 
+              className="btn-secondary get-analysis-btn"
+              onClick={() => navigate('/report')}
+            >
+              Go to Report Generator
+            </button>
             <p className="file-types">Supports .csv and .xlsx formats</p>
             {uploadStatus && (
               <p className={`upload-status ${uploadStatus.type}`}>

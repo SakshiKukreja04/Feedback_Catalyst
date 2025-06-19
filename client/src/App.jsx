@@ -9,6 +9,7 @@ import HowItWorks from './components/HowItWorks/HowItWorks';
 import Footer from './components/Footer/Footer';
 import Login from './components/Auth/Login';
 import Signup from './components/Auth/Signup';
+import Report from './components/Report/Report';
 import './App.css';
 
 function App() {
@@ -60,8 +61,17 @@ function App() {
               <Signup onAuth={setIsAuthenticated} />
             } 
           />
+          <Route 
+            path="/report" 
+            element={
+              <>
+                <Header isAuthenticated={isAuthenticated} />
+                <Report />
+                <Footer />
+              </>
+            } 
+          />
         </Routes>
-        <Footer />
       </div>
     </Router>
   );
