@@ -20,32 +20,32 @@ const Header = ({ isAuthenticated, hideNavButtons, transparentBg }) => {
         <div className="logo" onClick={() => navigate('/')}>
           <h1>Feedback Catalyst</h1>
         </div>
-        {!hideNavButtons && (
-          <nav className="nav-buttons">
-            {isAuthenticated ? (
-              <div className="profile-logout-stack">
-                <img src={PROFILE_IMG} alt="Profile" className="profile-img" />
-                <button className="logout-btn" onClick={handleLogout}>Logout</button>
-              </div>
-            ) : (
-              <>
-                <button 
-                  className="btn-secondary"
-                  onClick={() => navigate('/login')}
-                >
-                  Login
-                </button>
-                <button 
-                  className="btn-primary"
-                  onClick={() => navigate('/signup')}
-                >
-                  Sign Up
-                </button>
-              </>
-            )}
-          </nav>
-        )}
       </div>
+      {!hideNavButtons && (
+        <nav className="nav-buttons">
+          {isAuthenticated ? (
+            <div className="profile-logout-stack">
+              <img src={PROFILE_IMG} alt="Profile" className="profile-img" />
+              <button className="logout-btn" onClick={handleLogout}>Logout</button>
+            </div>
+          ) : (
+            <>
+              <button 
+                className="btn-secondary"
+                onClick={() => navigate('/login')}
+              >
+                Login
+              </button>
+              <button 
+                className="btn-primary"
+                onClick={() => navigate('/signup')}
+              >
+                Sign Up
+              </button>
+            </>
+          )}
+        </nav>
+      )}
     </header>
   );
 };

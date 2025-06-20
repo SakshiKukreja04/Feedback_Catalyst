@@ -51,7 +51,10 @@ function App() {
             element={
               isAuthenticated ? 
               <Navigate to="/" replace /> : 
-              <Login onAuth={setIsAuthenticated} />
+              <>
+                <Login onAuth={setIsAuthenticated} />
+                <Footer />
+              </>
             } 
           />
           <Route 
@@ -59,7 +62,10 @@ function App() {
             element={
               isAuthenticated ? 
               <Navigate to="/" replace /> : 
-              <Signup onAuth={setIsAuthenticated} />
+              <>
+                <Signup onAuth={setIsAuthenticated} />
+                <Footer />
+              </>
             } 
           />
           <Route 

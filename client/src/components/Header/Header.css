@@ -1,10 +1,14 @@
 .header {
-  position: sticky;
+  position: relative;
   top: 0;
-  background-color: var(--background);
+  background-color: #2563eb;
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   z-index: 1000;
-  width: 100%;
+  width: 100vw;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
 }
 
 .header-inner {
@@ -15,7 +19,7 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   height: 3.5rem;
 }
 
@@ -30,17 +34,24 @@
 .logo h1 {
   font-size: 1.5rem;
   font-weight: 700;
-  color: var(--primary-color);
+  color: white;
   white-space: nowrap;
   margin: 0;
   padding: 0;
+  
 }
 
 .nav-buttons {
+  position: absolute;
+  top: 50%;
+  right: 2rem;
+  transform: translateY(-50%);
   display: flex;
   gap: 1rem;
   align-items: center;
-  flex: 0 0 auto;
+  margin-left: 0;
+  color: white;
+  
 }
 
 .profile-logout-stack {
@@ -74,16 +85,7 @@
   margin-top: 0.3rem;
 }
 
-/* Remove all hover/transition/shadow effects */
-.logout-btn:hover,
-.profile-img:hover,
-.profile-logout-stack:hover,
-.profile-logout-stack:focus {
-  background: #fff;
-  color: var(--primary-color);
-  border: 1px solid #e5e7eb;
-  box-shadow: none;
-}
+
 
 /* Remove user icon/tooltip styles */
 .user-profile.user-icon-wrapper,
@@ -153,3 +155,21 @@
     align-items: flex-end;
   }
 } 
+
+.btn-primary{
+  color: white;
+  background-color: lightskyblue;
+}
+
+.header .btn-secondary {
+  color: #fff;
+  background: var(--primary-color);
+  border: none;
+  font-weight: 600;
+  transition: background 0.2s, color 0.2s;
+}
+
+.header .btn-secondary:hover {
+  background: var(--secondary-color);
+  color: #fff;
+}

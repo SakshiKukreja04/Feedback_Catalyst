@@ -1,8 +1,13 @@
 .footer {
-  background-color: rgb(30, 30, 30); /* Updated to match the black footer in your image */
+  background-color: #2563eb; /* Updated to match the black footer in your image */
   padding: 3rem 1rem;
   margin-top: auto;
-  width: 100%;
+  width: 100vw;
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
   box-sizing: border-box;
   
 }
