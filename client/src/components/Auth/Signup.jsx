@@ -4,6 +4,7 @@ import { createUserWithEmailAndPassword, updateProfile, signInWithPopup, GoogleA
 import { auth } from '../../firebase';
 import Header from '../Header/Header';
 import './Auth.css';
+import Footer from '../Footer/Footer'; 
 
 const Signup = ({ onAuth }) => {
   const navigate = useNavigate();

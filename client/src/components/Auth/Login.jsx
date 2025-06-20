@@ -4,6 +4,8 @@ import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 
 import { auth } from '../../firebase';
 import Header from '../Header/Header';
 import './Login.css';
+import Footer from '../Footer/Footer';  
+
 
 const Login = ({ onAuth }) => {
   const navigate = useNavigate();
