@@ -11,7 +11,10 @@ const Report = () => {
   const [uploadedFilename, setUploadedFilename] = useState('');
   const [reportType, setReportType] = useState('generalized');
   const [comparisons, setComparisons] = useState([{ ...emptyComparison }]);
+  
 
+  
+  
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -37,7 +40,7 @@ const Report = () => {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:5000/upload', {
+      const response = await fetch('http://localhost:5001/upload', {
         method: 'POST',
         body: formData,
       });
@@ -52,7 +55,7 @@ const Report = () => {
       setUploadedFilename(data.filename);
 
       // Extract headers from the uploaded file
-      const headersResponse = await fetch(`http://localhost:5000/headers/${data.filename}`);
+      const headersResponse = await fetch(`http://localhost:5001/headers/${data.filename}`);
       const headersData = await headersResponse.json();
       
       if (headersResponse.ok) {
@@ -96,11 +99,61 @@ const Report = () => {
 
   const isValid = comparisons.every(comp => comp.yField && comp.xFields.length > 0);
 
-  const handleGenerate = (e) => {
-    e.preventDefault();
-    if (!isValid) return;
-    alert('📄 Generating PDF Report…');
-  };
+ const handleGenerate = async (e) => {
+  e.preventDefault();
+  if (!isValid || !fileInputRef.current.files[0]) return;
+
+  const formData = new FormData();
+  formData.append('file', fileInputRef.current.files[0]);
+
+  let choice = "1";
+  if (reportType === 'fieldwise') choice = "2";
+
+  formData.append('choice', choice);
+
+  try {
+    setUploadStatus({ type: 'loading', message: 'Generating report...' });
+
+    const response = await fetch('http://localhost:5001/generate-report', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      try {
+        const jsonError = JSON.parse(errorText);
+        throw new Error(jsonError.error || 'Failed to generate report');
+      } catch {
+        throw new Error('Failed to generate report. Server responded with HTML.');
+      }
+    }
+
+    // Check content type before processing
+    const contentType = response.headers.get('Content-Type');
+    if (contentType && contentType.includes('application/zip')) {
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Feedback_Reports.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
+    } else {
+      const text = await response.text();
+      throw new Error(`Unexpected response format. Details: ${text}`);
+    }
+
+  } catch (error) {
+    setUploadStatus({ type: 'error', message: error.message });
+  }
+};
+
+
+
 
   return (
     <div className="report-container">
@@ -133,6 +186,12 @@ const Report = () => {
               {uploadStatus.message}
             </p>
           )}
+         {uploadStatus?.type === 'loading' && (
+        <div className="loader"></div>
+)}
+
+
+
         </div>
       </div>
 
@@ -216,8 +275,8 @@ const Report = () => {
         </div>
       )}
 
-      {/* Step 4: Generate Button */}
-      {fileHeaders.length > 0 && isValid && (
+      
+    {fileHeaders.length > 0 && isValid && (
         <div className="step-section">
           <h2>Step 4: Generate Report</h2>
           <button 
@@ -229,7 +288,9 @@ const Report = () => {
         </div>
       )}
     </div>
-  );
-};
+  );}
+
+
+
 
 export default Report; 
