@@ -1,8 +1,6 @@
 import React, { useState, useRef } from 'react';
 import './Report.css';
 
-const emptyComparison = { yField: '', xFields: [] };
-
 const Report = () => {
   const fileInputRef = useRef(null);
   const [uploadStatus, setUploadStatus] = useState(null);
@@ -10,16 +8,11 @@ const Report = () => {
   const [fileHeaders, setFileHeaders] = useState([]);
   const [uploadedFilename, setUploadedFilename] = useState('');
   const [reportType, setReportType] = useState('generalized');
-  const [comparisons, setComparisons] = useState([{ ...emptyComparison }]);
-  
 
-  
-  
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Check file type
     const validTypes = ['.csv', '.xlsx'];
     const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
     if (!validTypes.includes(fileExtension)) {
@@ -27,7 +20,6 @@ const Report = () => {
       return;
     }
 
-    // Check file size (5MB limit)
     if (file.size > 5 * 1024 * 1024) {
       setUploadStatus({ type: 'error', message: 'File size should be less than 5MB' });
       return;
@@ -51,13 +43,11 @@ const Report = () => {
         throw new Error(data.error || 'Upload failed');
       }
 
-      // Store the filename for later use
       setUploadedFilename(data.filename);
 
-      // Extract headers from the uploaded file
       const headersResponse = await fetch(`http://localhost:5001/headers/${data.filename}`);
       const headersData = await headersResponse.json();
-      
+
       if (headersResponse.ok) {
         setFileHeaders(headersData.headers);
         setUploadStatus({ type: 'success', message: 'File uploaded successfully! Headers extracted.' });
@@ -73,87 +63,61 @@ const Report = () => {
 
   const handleReportTypeChange = (type) => {
     setReportType(type);
-    if (type === 'fieldwise') {
-      setComparisons([{ ...emptyComparison }]);
-    } else {
-      setComparisons([{ ...emptyComparison }]);
-    }
   };
 
-  const handleComparisonChange = (idx, field, value) => {
-    setComparisons(prev => prev.map((comp, i) => {
-      if (i !== idx) return comp;
-      if (field === 'yField') return { ...comp, yField: value };
-      if (field === 'xFields') return { ...comp, xFields: value };
-      return comp;
-    }));
-  };
+  const isValid = fileHeaders.length > 0;
 
-  const addComparison = () => {
-    setComparisons(prev => [...prev, { ...emptyComparison }]);
-  };
+  const handleGenerate = async (e) => {
+    e.preventDefault();
+    if (!isValid || !fileInputRef.current.files[0]) return;
 
-  const removeComparison = (idx) => {
-    setComparisons(prev => prev.filter((_, i) => i !== idx));
-  };
+    const formData = new FormData();
+    formData.append('file', fileInputRef.current.files[0]);
 
-  const isValid = comparisons.every(comp => comp.yField && comp.xFields.length > 0);
+    let choice = "1";
+    if (reportType === 'fieldwise') choice = "2";
 
- const handleGenerate = async (e) => {
-  e.preventDefault();
-  if (!isValid || !fileInputRef.current.files[0]) return;
+    formData.append('choice', choice);
 
-  const formData = new FormData();
-  formData.append('file', fileInputRef.current.files[0]);
+    try {
+      setUploadStatus({ type: 'loading', message: 'Generating report...' });
 
-  let choice = "1";
-  if (reportType === 'fieldwise') choice = "2";
+      const response = await fetch('http://localhost:5001/generate-report', {
+        method: 'POST',
+        body: formData,
+      });
 
-  formData.append('choice', choice);
-
-  try {
-    setUploadStatus({ type: 'loading', message: 'Generating report...' });
-
-    const response = await fetch('http://localhost:5001/generate-report', {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      try {
-        const jsonError = JSON.parse(errorText);
-        throw new Error(jsonError.error || 'Failed to generate report');
-      } catch {
-        throw new Error('Failed to generate report. Server responded with HTML.');
+      if (!response.ok) {
+        const errorText = await response.text();
+        try {
+          const jsonError = JSON.parse(errorText);
+          throw new Error(jsonError.error || 'Failed to generate report');
+        } catch {
+          throw new Error('Failed to generate report. Server responded with HTML.');
+        }
       }
+
+      const contentType = response.headers.get('Content-Type');
+      if (contentType && contentType.includes('application/zip')) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Feedback_Reports.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
+      } else {
+        const text = await response.text();
+        throw new Error(`Unexpected response format. Details: ${text}`);
+      }
+
+    } catch (error) {
+      setUploadStatus({ type: 'error', message: error.message });
     }
-
-    // Check content type before processing
-    const contentType = response.headers.get('Content-Type');
-    if (contentType && contentType.includes('application/zip')) {
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'Feedback_Reports.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
-    } else {
-      const text = await response.text();
-      throw new Error(`Unexpected response format. Details: ${text}`);
-    }
-
-  } catch (error) {
-    setUploadStatus({ type: 'error', message: error.message });
-  }
-};
-
-
-
+  };
 
   return (
     <div className="report-container">
@@ -187,11 +151,8 @@ const Report = () => {
             </p>
           )}
          {uploadStatus?.type === 'loading' && (
-        <div className="loader"></div>
-)}
-
-
-
+          <div className="loader"></div>
+        )}
         </div>
       </div>
 
@@ -224,59 +185,10 @@ const Report = () => {
         </div>
       )}
 
-      {/* Step 3: Comparison Blocks */}
-      {fileHeaders.length > 0 && (
-        <div className="step-section">
-          <h2>Step 3: Configure Comparisons</h2>
-          {comparisons.map((comp, idx) => (
-            <div className="comparison-block" key={idx}>
-              <div className="field-group">
-                <label><b>Select comparison field (Y-axis)</b></label>
-                <select
-                  value={comp.yField}
-                  onChange={e => handleComparisonChange(idx, 'yField', e.target.value)}
-                  className="single-select"
-                >
-                  <option value="">Select Y field</option>
-                  {fileHeaders.map((header, i) => (
-                    <option key={i} value={header}>{header}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field-group">
-                <label><b>Select rating fields (X-axis)</b></label>
-                <select
-                  multiple
-                  value={comp.xFields}
-                  onChange={e => {
-                    const options = Array.from(e.target.selectedOptions, option => option.value);
-                    handleComparisonChange(idx, 'xFields', options);
-                  }}
-                  className="multi-select"
-                  size={Math.min(6, fileHeaders.length)}
-                >
-                  {fileHeaders.map((header, i) => (
-                    <option key={i} value={header}>{header}</option>
-                  ))}
-                </select>
-              </div>
-              {reportType === 'generalized' && comparisons.length > 1 && (
-                <button className="btn-remove" onClick={() => removeComparison(idx)}>
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
-          {reportType === 'generalized' && (
-            <button className="btn-add" onClick={addComparison}>
-              ➕ Add Another Comparison
-            </button>
-          )}
-        </div>
-      )}
+      {/* Step 3 Removed */}
 
-      
-    {fileHeaders.length > 0 && isValid && (
+      {/* Step 4: Generate Report */}
+      {fileHeaders.length > 0 && isValid && (
         <div className="step-section">
           <h2>Step 4: Generate Report</h2>
           <button 
@@ -288,9 +200,7 @@ const Report = () => {
         </div>
       )}
     </div>
-  );}
+  );
+};
 
-
-
-
-export default Report; 
+export default Report;
