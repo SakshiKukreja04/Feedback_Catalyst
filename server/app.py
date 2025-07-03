@@ -51,7 +51,7 @@ def generate_report():
 
     try:
         zip_path = process_feedback(file_path, choice)
-        return send_file(zip_path, as_attachment=True)
+        return send_file(zip_path, as_attachment=True, mimetype='application/zip')
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

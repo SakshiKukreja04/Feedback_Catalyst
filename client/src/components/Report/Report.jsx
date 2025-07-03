@@ -107,8 +107,17 @@ const Report = () => {
         document.body.appendChild(a);
         a.click();
         a.remove();
-
         setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
+      } else if (contentType && contentType.includes('application/pdf')) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Feedback_Report.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setUploadStatus({ type: 'success', message: '✅ PDF report generated and downloaded.' });
       } else {
         const text = await response.text();
         throw new Error(`Unexpected response format. Details: ${text}`);
