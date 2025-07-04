@@ -8,54 +8,62 @@ const Report = () => {
   const [fileHeaders, setFileHeaders] = useState([]);
   const [uploadedFilename, setUploadedFilename] = useState('');
   const [reportType, setReportType] = useState('generalized');
+  const [chartUrls, setChartUrls] = useState([]);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    const validTypes = ['.csv', '.xlsx'];
-    const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-    if (!validTypes.includes(fileExtension)) {
-      setUploadStatus({ type: 'error', message: 'Please upload a CSV or Excel file' });
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      setUploadStatus({ type: 'error', message: 'File size should be less than 5MB' });
-      return;
-    }
-
+    setChartUrls([]);
     setIsUploading(true);
-    setUploadStatus(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
+    setUploadStatus({ type: 'loading', message: 'Uploading file...' });
 
     try {
-      const response = await fetch('http://localhost:5001/upload', {
+      const validTypes = ['.csv', '.xlsx'];
+      const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      if (!validTypes.includes(fileExtension)) {
+        throw new Error('Please upload a CSV or Excel file');
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('File size should be less than 5MB');
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      // --- Upload Request ---
+      const uploadResponse = await fetch('http://localhost:5001/upload', {
         method: 'POST',
         body: formData,
       });
 
-      const data = await response.json();
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        throw new Error(`Upload failed (Status: ${uploadResponse.status}): ${errorText}`);
+      }
+      
+      const uploadData = await uploadResponse.json();
+      setUploadedFilename(uploadData.filename);
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Upload failed');
+      // --- Headers Request ---
+      const headersResponse = await fetch(`http://localhost:5001/headers/${uploadData.filename}`);
+      if (!headersResponse.ok) {
+        const errorText = await headersResponse.text();
+        throw new Error(`Failed to get headers (Status: ${headersResponse.status}): ${errorText}`);
       }
 
-      setUploadedFilename(data.filename);
-
-      const headersResponse = await fetch(`http://localhost:5001/headers/${data.filename}`);
       const headersData = await headersResponse.json();
+      setFileHeaders(headersData.headers);
+      setUploadStatus({ type: 'success', message: 'File uploaded successfully! You can now generate a report or view charts.' });
 
-      if (headersResponse.ok) {
-        setFileHeaders(headersData.headers);
-        setUploadStatus({ type: 'success', message: 'File uploaded successfully! Headers extracted.' });
-      } else {
-        throw new Error(headersData.error || 'Failed to extract headers');
-      }
     } catch (error) {
-      setUploadStatus({ type: 'error', message: error.message });
+      let message = error.message;
+      if (error instanceof SyntaxError) {
+          message = 'Received an invalid response from the server (likely an HTML error page instead of JSON). Please ensure the backend server is running the correct code and check its console for errors.';
+      }
+      setUploadStatus({ type: 'error', message: message });
     } finally {
       setIsUploading(false);
     }
@@ -71,16 +79,14 @@ const Report = () => {
     e.preventDefault();
     if (!isValid || !fileInputRef.current.files[0]) return;
 
-    const formData = new FormData();
-    formData.append('file', fileInputRef.current.files[0]);
-
-    let choice = "1";
-    if (reportType === 'fieldwise') choice = "2";
-
-    formData.append('choice', choice);
+    setIsGenerating(true);
+    setChartUrls([]);
+    setUploadStatus({ type: 'loading', message: 'Generating report...' });
 
     try {
-      setUploadStatus({ type: 'loading', message: 'Generating report...' });
+      const formData = new FormData();
+      formData.append('file', fileInputRef.current.files[0]);
+      formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
 
       const response = await fetch('http://localhost:5001/generate-report', {
         method: 'POST',
@@ -89,60 +95,81 @@ const Report = () => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        try {
-          const jsonError = JSON.parse(errorText);
-          throw new Error(jsonError.error || 'Failed to generate report');
-        } catch {
-          throw new Error('Failed to generate report. Server responded with HTML.');
-        }
+        throw new Error(`Failed to generate report (Status: ${response.status}): ${errorText}`);
       }
 
-      const contentType = response.headers.get('Content-Type');
-      if (contentType && contentType.includes('application/zip')) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'Feedback_Reports.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
-      } else if (contentType && contentType.includes('application/pdf')) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'Feedback_Report.pdf';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setUploadStatus({ type: 'success', message: '✅ PDF report generated and downloaded.' });
-      } else {
-        const text = await response.text();
-        throw new Error(`Unexpected response format. Details: ${text}`);
-      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Feedback_Reports.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
 
     } catch (error) {
-      setUploadStatus({ type: 'error', message: error.message });
+        setUploadStatus({ type: 'error', message: error.message });
+    } finally {
+        setIsGenerating(false);
     }
   };
+
+  const handleViewCharts = async (e) => {
+    e.preventDefault();
+    if (!isValid || !fileInputRef.current.files[0]) return;
+
+    setIsGenerating(true);
+    setChartUrls([]);
+    setUploadStatus({ type: 'loading', message: 'Generating charts...' });
+
+    try {
+        const formData = new FormData();
+        formData.append('file', fileInputRef.current.files[0]);
+        formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
+
+        const response = await fetch('http://localhost:5001/generate-charts', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to generate charts (Status: ${response.status}): ${errorText}`);
+        }
+
+        const data = await response.json();
+        const urls = data.chart_files.map(file => `http://localhost:5001/charts/${file}?t=${new Date().getTime()}`);
+        setChartUrls(urls);
+        setUploadStatus({ type: 'success', message: 'Charts generated successfully!' });
+
+    } catch (error) {
+        let message = error.message;
+        if (error instanceof SyntaxError) {
+            message = 'Received an invalid response from the server (likely an HTML error page instead of JSON). Please ensure the backend server is running the correct code and check its console for errors.';
+        }
+        setUploadStatus({ type: 'error', message: message });
+    } finally {
+        setIsGenerating(false);
+    }
+  };
+
 
   return (
     <div className="report-container">
       <div className="report-header">
-        <h1>Generate PDF Report</h1>
-        <p>Upload your dataset and create insightful reports</p>
+        <h1>Generate PDF Report or View Charts</h1>
+        <p>Upload your dataset and create insightful reports and visualizations</p>
       </div>
 
       {/* Step 1: File Upload */}
       <div className="step-section">
         <h2>Step 1: Upload Your File</h2>
         <div className="upload-section">
-          <button 
+          <button
             className="btn-primary upload-btn"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
+            disabled={isUploading || isGenerating}
           >
             {isUploading ? 'Uploading...' : 'Choose File'}
           </button>
@@ -159,9 +186,9 @@ const Report = () => {
               {uploadStatus.message}
             </p>
           )}
-         {uploadStatus?.type === 'loading' && (
-          <div className="loader"></div>
-        )}
+         {(isUploading || isGenerating) && (
+           <div className="loader"></div>
+         )}
         </div>
       </div>
 
@@ -194,20 +221,42 @@ const Report = () => {
         </div>
       )}
 
-      {/* Step 3 Removed */}
-
-      {/* Step 4: Generate Report */}
+      {/* Step 3: Generate */}
       {fileHeaders.length > 0 && isValid && (
         <div className="step-section">
-          <h2>Step 4: Generate Report</h2>
-          <button 
-            className="btn-generate"
-            onClick={handleGenerate}
-          >
-            Get PDF Report
-          </button>
+          <h2>Step 3: Generate Output</h2>
+          <div className="generate-buttons">
+            <button
+              className="btn-generate"
+              onClick={handleGenerate}
+              disabled={isGenerating}
+            >
+              Get PDF Report
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={handleViewCharts}
+              disabled={isGenerating}
+            >
+              View Charts
+            </button>
+          </div>
         </div>
       )}
+
+        {/* Step 4: Display Charts */}
+        {chartUrls.length > 0 && (
+            <div className="step-section">
+                <h2>Generated Charts</h2>
+                <div className="charts-container">
+                    {chartUrls.map((url, index) => (
+                        <div key={index} className="chart-item">
+                            <img src={url} alt={`Generated chart ${index + 1}`} />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
     </div>
   );
 };

@@ -41,7 +41,8 @@ def get_headers(filename):
 @app.route('/generate-report', methods=['POST'])
 def generate_report():
     file = request.files.get('file')
-    choice = request.form.get('choice')  # must match frontend's formData.append('choice', ...)
+    choice = request.form.get('choice')
+    show_charts = request.form.get('showCharts') == 'true'
     if not file or not choice:
         return jsonify({"error": "Missing file or choice"}), 400
 
