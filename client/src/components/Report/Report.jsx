@@ -7,9 +7,22 @@ const Report = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [fileHeaders, setFileHeaders] = useState([]);
   const [uploadedFilename, setUploadedFilename] = useState('');
+  const [feedbackType, setFeedbackType] = useState('stakeholder'); // New state for feedback type
   const [reportType, setReportType] = useState('generalized');
   const [chartUrls, setChartUrls] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleFeedbackTypeChange = (type) => {
+    setFeedbackType(type);
+    // Reset other states when feedback type changes
+    setFileHeaders([]);
+    setUploadedFilename('');
+    setUploadStatus(null);
+    setChartUrls([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -87,6 +100,7 @@ const Report = () => {
       const formData = new FormData();
       formData.append('file', fileInputRef.current.files[0]);
       formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
+      formData.append('feedbackType', feedbackType); // Send feedback type to backend
 
       const response = await fetch('http://localhost:5001/generate-report', {
         method: 'POST',
@@ -127,6 +141,7 @@ const Report = () => {
         const formData = new FormData();
         formData.append('file', fileInputRef.current.files[0]);
         formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
+        formData.append('feedbackType', feedbackType); // Send feedback type to backend
 
         const response = await fetch('http://localhost:5001/generate-charts', {
             method: 'POST',
@@ -154,7 +169,6 @@ const Report = () => {
     }
   };
 
-
   return (
     <div className="report-container">
       <div className="report-header">
@@ -162,9 +176,36 @@ const Report = () => {
         <p>Upload your dataset and create insightful reports and visualizations</p>
       </div>
 
-      {/* Step 1: File Upload */}
+      {/* Step 1: Feedback Type Selection */}
       <div className="step-section">
-        <h2>Step 1: Upload Your File</h2>
+        <h2>Step 1: Select Feedback Type</h2>
+        <div className="feedback-type-selection">
+          <label className="feedback-type-option">
+            <input
+              type="radio"
+              name="feedbackType"
+              value="stakeholder"
+              checked={feedbackType === 'stakeholder'}
+              onChange={() => handleFeedbackTypeChange('stakeholder')}
+            />
+            Stakeholder Feedback
+          </label>
+          <label className="feedback-type-option">
+            <input
+              type="radio"
+              name="feedbackType"
+              value="subject"
+              checked={feedbackType === 'subject'}
+              onChange={() => handleFeedbackTypeChange('subject')}
+            />
+            Subject Feedback
+          </label>
+        </div>
+      </div>
+
+      {/* Step 2: File Upload */}
+      <div className="step-section">
+        <h2>Step 2: Upload Your File</h2>
         <div className="upload-section">
           <button
             className="btn-primary upload-btn"
@@ -192,10 +233,10 @@ const Report = () => {
         </div>
       </div>
 
-      {/* Step 2: Report Type Toggle */}
-      {fileHeaders.length > 0 && (
+      {/* Step 3: Report Type Toggle (Only for Stakeholder Feedback) */}
+      {fileHeaders.length > 0 && feedbackType === 'stakeholder' && (
         <div className="step-section">
-          <h2>Step 2: Choose Report Type</h2>
+          <h2>Step 3: Choose Report Type</h2>
           <div className="report-type-selection">
             <label className="report-type-option">
               <input
@@ -221,10 +262,10 @@ const Report = () => {
         </div>
       )}
 
-      {/* Step 3: Generate */}
+      {/* Step 4: Generate (Step number adjusts based on feedback type) */}
       {fileHeaders.length > 0 && isValid && (
         <div className="step-section">
-          <h2>Step 3: Generate Output</h2>
+          <h2>Step {feedbackType === 'stakeholder' ? '4' : '3'}: Generate Output</h2>
           <div className="generate-buttons">
             <button
               className="btn-generate"
@@ -244,19 +285,19 @@ const Report = () => {
         </div>
       )}
 
-        {/* Step 4: Display Charts */}
-        {chartUrls.length > 0 && (
-            <div className="step-section">
-                <h2>Generated Charts</h2>
-                <div className="charts-container">
-                    {chartUrls.map((url, index) => (
-                        <div key={index} className="chart-item">
-                            <img src={url} alt={`Generated chart ${index + 1}`} />
-                        </div>
-                    ))}
-                </div>
-            </div>
-        )}
+      {/* Step 5: Display Charts (Step number adjusts based on feedback type) */}
+      {chartUrls.length > 0 && (
+        <div className="step-section">
+          <h2>Generated Charts</h2>
+          <div className="charts-container">
+            {chartUrls.map((url, index) => (
+              <div key={index} className="chart-item">
+                <img src={url} alt={`Generated chart ${index + 1}`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,7 +1,7 @@
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import os, pandas as pd
-from feedback_processor import process_feedback
+from feedback_processor import process_feedback, process_for_charts
 import matplotlib.pyplot as plt
 import re
 
@@ -19,10 +19,11 @@ def sanitize_filename(name):
 def upload_file():
     if 'file' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
+    
     file = request.files['file']
     if not file.filename:
         return jsonify({"error": "No file selected"}), 400
-
+    
     save_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(save_path)
     return jsonify({"filename": file.filename})
@@ -33,6 +34,7 @@ def get_headers(filename):
     path = os.path.join(UPLOAD_FOLDER, filename)
     if not os.path.exists(path):
         return jsonify({"error": "File not found"}), 404
+    
     try:
         if filename.lower().endswith('.csv'):
             df = pd.read_csv(path)
@@ -42,21 +44,28 @@ def get_headers(filename):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# 3) Generate the report ZIP using the previously uploaded file + choice
+# 3) Generate the report ZIP using the previously uploaded file + choice + feedback type
 @app.route('/generate-report', methods=['POST'])
 def generate_report():
     file = request.files.get('file')
     choice = request.form.get('choice')
-    show_charts = request.form.get('showCharts') == 'true'
+    feedback_type = request.form.get('feedbackType', 'stakeholder')  # Default to stakeholder
+    
     if not file or not choice:
         return jsonify({"error": "Missing file or choice"}), 400
-
+    
+    if choice not in ['1', '2']:
+        return jsonify({"error": "Invalid choice parameter"}), 400
+    
+    if feedback_type not in ['stakeholder', 'subject']:
+        return jsonify({"error": "Invalid feedback type"}), 400
+    
     # Save (or overwrite) the same file
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(file_path)
-
+    
     try:
-        zip_path = process_feedback(file_path, choice)
+        zip_path = process_feedback(file_path, choice, feedback_type)
         return send_file(zip_path, as_attachment=True, mimetype='application/zip')
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -65,43 +74,31 @@ def generate_report():
 def generate_charts():
     file = request.files.get('file')
     choice = request.form.get('choice')
+    feedback_type = request.form.get('feedbackType', 'stakeholder')  # Default to stakeholder
+    
     if not file or not choice:
         return jsonify({"error": "Missing file or choice"}), 400
-
+    
+    if choice not in ['1', '2']:
+        return jsonify({"error": "Invalid choice parameter"}), 400
+    
+    if feedback_type not in ['stakeholder', 'subject']:
+        return jsonify({"error": "Invalid feedback type"}), 400
+    
     # Save the uploaded file temporarily
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(file_path)
-
-    # Read the file into a DataFrame
-    if file.filename.lower().endswith('.csv'):
-        df = pd.read_csv(file_path)
-    else:
-        df = pd.read_excel(file_path)
-
-    # Create charts directory if it doesn't exist
-    charts_dir = os.path.join(os.getcwd(), "charts")
-    os.makedirs(charts_dir, exist_ok=True)
-
-    chart_files = []
-    # For each numeric column, generate a bar chart of value counts
-    for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]):
-            plt.figure()
-            df[col].value_counts().sort_index().plot(kind='bar')
-            plt.title(f'Distribution for {col}')
-            plt.xlabel(col)
-            plt.ylabel('Count')
-            chart_filename = f"{sanitize_filename(col)}_chart.png"
-            chart_path = os.path.join(charts_dir, chart_filename)
-            plt.savefig(chart_path)
-            plt.close()
-            chart_files.append(chart_filename)
-
-    return jsonify({"chart_files": chart_files})
+    
+    try:
+        # Use the unified chart generation function from feedback_processor
+        chart_files = process_for_charts(file_path, choice, feedback_type)
+        return jsonify({"chart_files": chart_files})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/charts/<filename>')
 def get_chart(filename):
-    charts_dir = os.path.join(os.getcwd(), "charts")
+    charts_dir = os.path.join(os.getcwd(), "feedback_catalyst")
     return send_from_directory(charts_dir, filename)
 
 if __name__ == '__main__':
