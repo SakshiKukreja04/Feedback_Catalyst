@@ -85,11 +85,15 @@ def detect_likert_categories_with_gemini_subject(df):
     prompt = f"""
 You are an expert in analyzing educational feedback forms.
 
-From the following sample of a feedback form, detect which questions are **Likert-scale based** (i.e., those answered on a scale from 1 to 5, such as Strongly Disagree to Strongly Agree).
+From the sample below, detect which questions are Likert-scale based (i.e., answered on a 1 to 5 scale such as Strongly Disagree to Strongly Agree).
 
-Group the Likert-type questions into **logical and meaningful categories** based on the semantic content of the question.
+Your task is to group these Likert-type questions into a **small number of logically meaningful and broad categories** based on their semantic content.
 
-Identify the categories naturally from the context. Use intuitive names 
+ **Important Instructions**:
+- Do not create too many categories.
+- Avoid overly specific or repetitive categories.
+- Combine semantically similar questions into the same category.
+- Category names should be **intuitive**, **concise**, and **context-aware** (e.g., "Teaching Quality", "Learning Resources", "Skill Development").
 
 Return a **valid Python dictionary** in JSON format as:
 {{ 
@@ -281,42 +285,56 @@ class SubjectPDF(FPDF):
         self.cell(0, 10, sanitize_text(title), ln=1)
 
     def table(self, df, y_start):
-        self.set_xy(10, y_start)
+        if df.empty:
+            self.cell(0, 10, "No data available for this section.", ln=1)
+            return
+
         self.set_font('Arial', '', 9)
+        first_col_width = 55
+        num_other_cols = len(df.columns) - 1
+        other_col_width = (self.w - 20 - first_col_width) / num_other_cols if num_other_cols > 0 else 0
+        row_height = 8
 
-        first_col_width = 90  # Increased width for the question column
-        other_col_width = (self.w - 20 - first_col_width) / (len(df.columns) - 1)
-        row_height = 6
-
-        # Header row
+        # Header
         self.set_font('Arial', 'B', 9)
-        self.multi_cell(first_col_width, row_height, str(df.columns[0]), border=1)
-        x_start = self.get_x()
-        y_start = self.get_y() - row_height
-        self.set_xy(x_start + first_col_width, y_start)
+        self.cell(first_col_width, row_height, str(df.columns[0]), border=1)
         for col in df.columns[1:]:
             self.cell(other_col_width, row_height, str(col), border=1, align='C')
         self.ln()
 
         # Data rows
         self.set_font('Arial', '', 8)
-        for i in range(len(df)):
-            x = self.get_x()
-            y = self.get_y()
+        for _, row in df.iterrows():
+            x_start = self.get_x()
+            y_start = self.get_y()
 
-            # Wrap and measure first cell (question)
-            text = sanitize_text(df.iloc[i, 0])
-            self.multi_cell(first_col_width, row_height, text, border=1)
-            y_end = self.get_y()
-            used_height = y_end - y
+            text = sanitize_text(row.iloc[0])
+            lines = self.multi_cell(first_col_width, row_height, text, split_only=True)
+            height_needed = row_height * len(lines)
 
-            self.set_xy(x + first_col_width, y)
+            # Check if this row will overflow page
+            if y_start + height_needed > self.h - self.b_margin:
+                self.add_page()
+                self.set_font('Arial', 'B', 9)
+                self.cell(first_col_width, row_height, str(df.columns[0]), border=1)
+                for col in df.columns[1:]:
+                    self.cell(other_col_width, row_height, str(col), border=1, align='C')
+                self.ln()
+                self.set_font('Arial', '', 8)
+                x_start = self.get_x()
+                y_start = self.get_y()
 
-            # Remaining columns
-            for item in df.iloc[i, 1:]:
-                self.cell(other_col_width, used_height, str(item), border=1, align='C')
+            # Draw first cell (multi-cell)
+            self.set_xy(x_start, y_start)
+            self.multi_cell(first_col_width, row_height, text, border=1, align='L')
 
-            self.set_y(y + used_height)
+            # Draw remaining cells
+            self.set_xy(x_start + first_col_width, y_start)
+            for item in row.iloc[1:]:
+                self.cell(other_col_width, height_needed, str(item), border=1, align='C')
+            self.ln(height_needed)
+
+
 
     def insert_image_with_page_check(self, image_path, y_margin=10):
         if os.path.exists(image_path):
