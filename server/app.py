@@ -8,6 +8,8 @@ from pymongo import MongoClient
 import gridfs
 from io import BytesIO
 import tempfile
+from flask import url_for  
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
@@ -113,7 +115,6 @@ def generate_report():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route('/generate-charts', methods=['POST'])
 def generate_charts():
     file = request.files.get('file')
@@ -136,36 +137,25 @@ def generate_charts():
             tmp_file_path = tmp_file.name
             file.save(tmp_file_path)
 
-        # Safely process after file is closed
-        chart_files = process_for_charts(tmp_file_path, choice, feedback_type)
+        # Generate chart files (filenames already stored in GridFS by plot_ratings)
+        chart_filenames = process_for_charts(tmp_file_path, choice, feedback_type)
+        print(f"Chart filenames returned: {chart_filenames}")
 
-        stored_chart_ids = []
-        for chart_file in chart_files:
-            chart_path = os.path.join("feedback_catalyst", chart_file)
-            if os.path.exists(chart_path):
-                with open(chart_path, 'rb') as f:
-                    chart_content = f.read()
+        # Generate URLs to retrieve charts via /charts/<filename>
+        chart_urls = [
+            url_for('get_chart', filename=filename, _external=True)
+            for filename in chart_filenames
+        ]
 
-                chart_id = fs_charts.put(
-                    chart_content,
-                    filename=chart_file,
-                    content_type='image/png'
-                )
+        return jsonify({
+            "chart_urls": chart_urls,
+            "total_charts": len(chart_urls)
+        })
 
-                charts_collection.insert_one({
-                    'chart_id': chart_id,
-                    'filename': chart_file,
-                    'content_type': 'image/png',
-                    'size': len(chart_content)
-                })
-
-                stored_chart_ids.append(chart_file)
-
-        return jsonify({"chart_files": stored_chart_ids})
-    
     except Exception as e:
+        print(f"Error in generate_charts: {str(e)}")
         return jsonify({"error": str(e)}), 500
-    
+
     finally:
         if tmp_file_path and os.path.exists(tmp_file_path):
             os.unlink(tmp_file_path)
@@ -174,11 +164,16 @@ def generate_charts():
 @app.route('/charts/<filename>')
 def get_chart(filename):
     try:
-        # Find chart in GridFS
+        print(f"Looking for chart with filename: {filename}")  # Add logging
+        
+        # Find chart in GridFS by filename
         chart_doc = fs_charts.find_one({"filename": filename})
         if not chart_doc:
+            print(f"Chart not found for filename: {filename}")  # Add logging
             return jsonify({"error": "Chart not found"}), 404
             
+        print(f"Found chart for filename: {filename}")  # Add logging
+        
         # Return chart content
         return send_file(
             BytesIO(chart_doc.read()),
@@ -186,7 +181,8 @@ def get_chart(filename):
             as_attachment=False
         )
     except Exception as e:
+        print(f"Error in get_chart: {str(e)}")  # Add logging
         return jsonify({"error": str(e)}), 500
-
+        
 if __name__ == '__main__':
     app.run(port=5001, debug=True)

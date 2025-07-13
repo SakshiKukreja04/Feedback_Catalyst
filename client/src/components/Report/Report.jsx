@@ -154,9 +154,10 @@ const Report = () => {
         }
 
         const data = await response.json();
-        const urls = data.chart_files.map(file => `http://localhost:5001/charts/${file}?t=${new Date().getTime()}`);
+        const urls = data.chart_urls; // ✅ this is the correct field name now
         setChartUrls(urls);
         setUploadStatus({ type: 'success', message: 'Charts generated successfully!' });
+
 
     } catch (error) {
         let message = error.message;

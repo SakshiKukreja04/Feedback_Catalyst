@@ -40,7 +40,7 @@ Sample data:
 """
     try:
         response = model.generate_content(prompt)
-        result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip())
+        result_text = re.sub(r"^(?:json|python)?|$", "", response.text.strip())
         return json.loads(result_text)
     except Exception as e:
         print(f"Gemini failed: {e}")
@@ -114,7 +114,7 @@ Here is the sample data:
 """
     try:
         response = model.generate_content(prompt)
-        result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip())
+        result_text = re.sub(r"^(?:json|python)?|$", "", response.text.strip())
         return json.loads(result_text)
     except Exception as e:
         print("Gemini failed. Raw output:")
@@ -641,4 +641,4 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', save_char
     else:
         generate_and_collect_charts(df, "Overall", "All_Students")
 
-    return chart_files
+    return chart_files   
