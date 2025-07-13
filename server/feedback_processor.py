@@ -40,10 +40,11 @@ Sample data:
 """
     try:
         response = model.generate_content(prompt)
-        result_text = re.sub(r"^(?:json|python)?|$", "", response.text.strip())
+        result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip()).strip()
         return json.loads(result_text)
     except Exception as e:
         print(f"Gemini failed: {e}")
+        print(f"Raw output:\n{response.text}")
         return {}
 
 def extract_bracket_content(text):
@@ -114,7 +115,7 @@ Here is the sample data:
 """
     try:
         response = model.generate_content(prompt)
-        result_text = re.sub(r"^(?:json|python)?|$", "", response.text.strip())
+        result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip()).strip()
         return json.loads(result_text)
     except Exception as e:
         print("Gemini failed. Raw output:")
