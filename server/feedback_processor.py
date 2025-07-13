@@ -4,6 +4,14 @@ import matplotlib.pyplot as plt
 from fpdf import FPDF
 import os, zipfile, json, re, textwrap
 from io import BytesIO
+from pymongo import MongoClient
+import gridfs
+
+# MongoDB setup
+client = MongoClient('mongodb://localhost:27017/')  # Update with your MongoDB connection string
+db = client['feedback_db']
+charts_collection = db['charts']
+fs_charts = gridfs.GridFS(db, collection='charts')
 
 try:
     # Attempt to configure from environment variable first
@@ -16,7 +24,6 @@ try:
 except Exception as e:
     print(f"Could not configure Gemini. AI features will fail. Error: {e}")
     model = None
-
 
 # gemini
 def detect_likert_categories_with_gemini(df):
@@ -77,7 +84,6 @@ Feedback suggestions:
     except Exception as e:
         print(f"Gemini summarization failed: {e}")
         return "Summary could not be generated."
-
 
 def detect_likert_categories_with_gemini_subject(df):
     if not model: return {}
@@ -205,13 +211,29 @@ def plot_ratings(score_df, name, title_prefix, feedback_type='stakeholder'):
     safe_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', title_prefix)
     safe_filename = f"{safe_prefix}_{safe_name}.png"
     
-    # Ensure directory exists
-    output_dir = "feedback_catalyst"
-    os.makedirs(output_dir, exist_ok=True)
+    # Save to BytesIO instead of file
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
     
-    chart_path = os.path.join(output_dir, safe_filename)
-    plt.savefig(chart_path)
+    # Store in MongoDB GridFS
+    chart_id = fs_charts.put(
+        buffer.getvalue(),
+        filename=safe_filename,
+        content_type='image/png'
+    )
+    
+    # Store metadata
+    charts_collection.insert_one({
+        'chart_id': chart_id,
+        'filename': safe_filename,
+        'content_type': 'image/png',
+        'size': len(buffer.getvalue())
+    })
+    
     plt.close()
+    buffer.close()
+    
     return safe_filename # Return only the filename
 
 # pdf
@@ -262,12 +284,25 @@ class StakeholderPDF(FPDF):
                 self.cell(other_col_width, height_of_row, str(item), border=1, align='C')
             self.ln(height_of_row)
 
-    def insert_image_with_page_check(self, image_path, y_margin=10):
-        full_path = os.path.join("feedback_catalyst", image_path)
-        if os.path.exists(full_path):
-            self.add_page()
-            self.image(full_path, x=10, y=30, w=self.w - 20)
-            self.set_y(self.get_y() + self.h * 0.4) # Move cursor down
+    def insert_image_from_mongodb(self, filename, y_margin=10):
+        try:
+            # Find chart in GridFS
+            chart_doc = fs_charts.find_one({"filename": filename})
+            if chart_doc:
+                self.add_page()
+                # Save chart to temporary file for PDF insertion
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp.write(chart_doc.read())
+                    tmp_path = tmp.name
+                
+                self.image(tmp_path, x=10, y=30, w=self.w - 20)
+                self.set_y(self.get_y() + self.h * 0.4)
+                
+                # Clean up temporary file
+                os.unlink(tmp_path)
+        except Exception as e:
+            print(f"Error inserting image from MongoDB: {e}")
 
     def add_summary(self, text):
         self.add_page()
@@ -334,13 +369,25 @@ class SubjectPDF(FPDF):
                 self.cell(other_col_width, height_needed, str(item), border=1, align='C')
             self.ln(height_needed)
 
-
-
-    def insert_image_with_page_check(self, image_path, y_margin=10):
-        if os.path.exists(image_path):
-            self.add_page()
-            self.image(image_path, x=10, y=30, w=self.w - 20)
-            self.set_y(120)
+    def insert_image_from_mongodb(self, filename, y_margin=10):
+        try:
+            # Find chart in GridFS
+            chart_doc = fs_charts.find_one({"filename": filename})
+            if chart_doc:
+                self.add_page()
+                # Save chart to temporary file for PDF insertion
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp.write(chart_doc.read())
+                    tmp_path = tmp.name
+                
+                self.image(tmp_path, x=10, y=30, w=self.w - 20)
+                self.set_y(120)
+                
+                # Clean up temporary file
+                os.unlink(tmp_path)
+        except Exception as e:
+            print(f"Error inserting image from MongoDB: {e}")
 
 # report generation
 def generate_stakeholder_report(sub_df, name, value, category_groups):
@@ -367,7 +414,7 @@ def generate_stakeholder_report(sub_df, name, value, category_groups):
                 chart_files.append(chart_file)
 
     for chart in chart_files:
-        pdf.insert_image_with_page_check(chart)
+        pdf.insert_image_from_mongodb(chart)
 
     suggestion_col = next((col for col in sub_df.columns if 'suggestion' in col.lower()), None)
     if suggestion_col:
@@ -406,7 +453,7 @@ def generate_subject_report(sub_df, name, value, category_groups):
         pdf.ln(10)
 
     for _, chart in chart_paths:
-        pdf.insert_image_with_page_check(chart)
+        pdf.insert_image_from_mongodb(chart)
 
     safe_value = str(value).replace(" ", "_").replace("/", "-").replace(".", "_")
     output_dir = "feedback_catalyst"
@@ -446,66 +493,152 @@ def _get_data_and_groups(file_path, feedback_type='stakeholder'):
     
     return df, category_groups
 
-def process_feedback(file_path, choice, feedback_type='stakeholder'):
-    """Generates PDF reports and zips them."""
-    df, category_groups = _get_data_and_groups(file_path, feedback_type)
-    
-    branch_col = next((col for col in df.columns if "branch" in col.lower()), None)
-    generated_files = []
+import pandas as pd
+import zipfile
+from io import BytesIO
+import os
 
-    if choice == "1":
+def process_feedback(file_bytes, filename, choice, feedback_type='stakeholder', save_to_disk=False, save_chart_fn=None):
+    try:
+        # Read Excel or CSV from BytesIO
+        try:
+            df = pd.read_excel(file_bytes)
+        except Exception:
+            file_bytes.seek(0)
+            df = pd.read_csv(file_bytes)
+    except Exception as e:
+        raise ValueError(f"Error reading uploaded file: {e}")
+
+    # Detect Likert categories based on feedback type
+    if feedback_type == 'stakeholder':
+        category_groups_raw = group_columns_by_category(df)
+        category_groups = {}
+        for category, cols in category_groups_raw.items():
+            likert_cols = []
+            for col in cols:
+                if col in df.columns:
+                    numeric_vals = pd.to_numeric(df[col], errors='coerce').dropna()
+                    if not numeric_vals.empty and numeric_vals.between(1, 5).all():
+                        likert_cols.append(col)
+            if likert_cols:
+                category_groups[category] = likert_cols
+    else:  # subject feedback
+        category_map = detect_likert_categories_with_gemini_subject(df)
+        category_groups = {}
+        for question, category in category_map.items():
+            if question in df.columns:
+                if df[question].dropna().apply(lambda x: str(x).strip().isdigit()).all():
+                    category_groups.setdefault(category.strip(), []).append(question)
+
+    output_pdfs = []
+
+    # Interpret choice
+    if choice == '1':
+        # No grouping – overall report
         if feedback_type == 'stakeholder':
-            pdf_path = generate_stakeholder_report(df, "Overall", "All_Students", category_groups)
+            pdf_path = generate_stakeholder_report(df, 'Overall', 'All Students', category_groups)
         else:
-            pdf_path = generate_subject_report(df, "Overall", "All_Students", category_groups)
-        generated_files.append(pdf_path)
-    elif choice == "2" and branch_col:
-        for branch in df[branch_col].dropna().unique():
-            branch_df = df[df[branch_col] == branch]
+            pdf_path = generate_subject_report(df, 'Overall', 'All Students', category_groups)
+        output_pdfs.append(pdf_path)
+
+    elif choice == '2':
+        # Group by branch/department
+        possible_group_cols = ['Branch', 'Department', 'Subject', 'Faculty', 'Class']  # customize as per your sheet
+        group_col = next((col for col in df.columns if col.strip().lower() in [x.lower() for x in possible_group_cols]), None)
+
+        if not group_col:
+            raise ValueError("No valid grouping column (e.g., 'Branch', 'Department') found in the file.")
+
+        for value, group_df in df.groupby(group_col):
             if feedback_type == 'stakeholder':
-                pdf_path = generate_stakeholder_report(branch_df, "Branch", branch, category_groups)
+                pdf_path = generate_stakeholder_report(group_df, group_col, value, category_groups)
             else:
-                pdf_path = generate_subject_report(branch_df, "Branch", branch, category_groups)
-            generated_files.append(pdf_path)
-    else: # Default/fallback case
-        if feedback_type == 'stakeholder':
-            pdf_path = generate_stakeholder_report(df, "Overall", "All_Students", category_groups)
-        else:
-            pdf_path = generate_subject_report(df, "Overall", "All_Students", category_groups)
-        generated_files.append(pdf_path)
+                pdf_path = generate_subject_report(group_df, group_col, value, category_groups)
+            output_pdfs.append(pdf_path)
 
-    zip_path = "feedback_reports.zip"
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for file_path in generated_files:
-            if os.path.exists(file_path):
-                zipf.write(file_path, arcname=os.path.basename(file_path))
-    return zip_path
+    else:
+        raise ValueError("Invalid choice. Must be '1' or '2'.")
 
-def process_for_charts(file_path, choice, feedback_type='stakeholder'):
-    """Generates only the chart images and returns their filenames."""
-    df, category_groups = _get_data_and_groups(file_path, feedback_type)
-    
+    # Create ZIP archive in memory
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for pdf_path in output_pdfs:
+            arcname = os.path.basename(pdf_path)
+            with open(pdf_path, 'rb') as f:
+                zipf.writestr(arcname, f.read())
+
+    zip_buffer.seek(0)
+
+    # Clean up
+    if not save_to_disk:
+        for pdf_path in output_pdfs:
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+
+    return zip_buffer
+
+
+
+def process_for_charts(file_path, choice, feedback_type='stakeholder', save_chart_fn=None):
+    """
+    Generates charts for feedback analysis and returns a list of chart filenames.
+    Works with a file path (Excel or CSV).
+    """
+
+    # Try reading Excel or fallback to CSV
+    try:
+        df = pd.read_excel(file_path)
+    except Exception:
+        try:
+            df = pd.read_csv(file_path)
+        except Exception as e:
+            raise ValueError(f"Error reading uploaded file: {e}")
+
+    # Group questions by categories
+    if feedback_type == 'stakeholder':
+        category_groups_raw = group_columns_by_category(df)
+        category_groups = {}
+        for category, cols in category_groups_raw.items():
+            likert_cols = []
+            for col in cols:
+                if col in df.columns:
+                    numeric_vals = pd.to_numeric(df[col], errors='coerce').dropna()
+                    if not numeric_vals.empty and numeric_vals.between(1, 5).all():
+                        likert_cols.append(col)
+            if likert_cols:
+                category_groups[category] = likert_cols
+    else:  # subject feedback
+        category_map = detect_likert_categories_with_gemini_subject(df)
+        category_groups = {}
+        for question, category in category_map.items():
+            if question in df.columns:
+                if df[question].dropna().apply(lambda x: str(x).strip().isdigit()).all():
+                    category_groups.setdefault(category.strip(), []).append(question)
+
+    # Detect grouping column like 'Branch'
     branch_col = next((col for col in df.columns if "branch" in col.lower()), None)
     chart_files = []
 
+    # Helper to generate and collect charts
     def generate_and_collect_charts(sub_df, name, value):
         for category, cols in category_groups.items():
             valid_cols = [col for col in cols if col in sub_df.columns]
-            if not valid_cols: continue
-            
+            if not valid_cols:
+                continue
             summary_df = generate_summary_table(sub_df, valid_cols, feedback_type)
             if not summary_df.empty:
                 chart_file = plot_ratings(summary_df, category, f"{name}_{value}", feedback_type)
                 if chart_file:
                     chart_files.append(chart_file)
 
+    # Chart generation based on choice
     if choice == "1":
         generate_and_collect_charts(df, "Overall", "All_Students")
     elif choice == "2" and branch_col:
         for branch in df[branch_col].dropna().unique():
             branch_df = df[df[branch_col] == branch]
             generate_and_collect_charts(branch_df, "Branch", branch)
-    else: # Default/fallback case
+    else:
         generate_and_collect_charts(df, "Overall", "All_Students")
-        
+
     return chart_files
