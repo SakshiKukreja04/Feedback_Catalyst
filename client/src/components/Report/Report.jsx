@@ -101,6 +101,8 @@ const Report = () => {
       formData.append('file', fileInputRef.current.files[0]);
       formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
       formData.append('feedbackType', feedbackType); // Send feedback type to backend
+      formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, "")); // file name without extension
+      formData.append('reportType', reportType);
 
       const response = await fetch('http://localhost:5001/generate-report', {
         method: 'POST',
@@ -142,6 +144,8 @@ const Report = () => {
         formData.append('file', fileInputRef.current.files[0]);
         formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
         formData.append('feedbackType', feedbackType); // Send feedback type to backend
+        formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, "")); // file name without extension
+        formData.append('reportType', reportType);
 
         const response = await fetch('http://localhost:5001/generate-charts', {
             method: 'POST',

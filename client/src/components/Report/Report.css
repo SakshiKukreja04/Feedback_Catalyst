@@ -271,33 +271,35 @@
 
 .charts-container {
   display: flex;
-  gap: 20px;
-  overflow-x: auto;
-  padding: 20px 0;
-  scroll-behavior: smooth;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  width: 100%;
+  max-width: 1800px;
+  margin: 0 auto;
 }
 
 .chart-item {
-  flex: 0 0 auto;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 20px;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  min-width: 300px;
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-  backdrop-filter: blur(10px);
-}
-
-.chart-item:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  width: 100%;
+  min-width: 1400px;
+  max-width: 1700px;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 2rem;
+  padding: 0 32px;
 }
 
 .chart-item img {
-  width: 100%;
+  max-width: 100%;
   height: auto;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.15);
+}
+
+/* Increase font size for chart x-axis labels (matplotlib images) */
+.chart-item {
+  font-size: 1.5rem;
+  font-weight: 600;
 }
 
 .loader {

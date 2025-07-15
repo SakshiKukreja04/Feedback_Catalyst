@@ -86,6 +86,8 @@ def generate_report():
     file = request.files.get('file')
     choice = request.form.get('choice')
     feedback_type = request.form.get('feedbackType', 'stakeholder')
+    uploaded_filename = request.form.get('uploadedFilename', None)
+    report_type = request.form.get('reportType', None)
 
     if not file or not choice:
         return jsonify({"error": "Missing file or choice"}), 400
@@ -97,21 +99,20 @@ def generate_report():
         return jsonify({"error": "Invalid feedback type"}), 400
 
     try:
-        # Use filename for extension and pass file.stream as file-like object
         zip_buffer = process_feedback(
             file_bytes=file.stream,
             filename=file.filename,
             choice=choice,
-            feedback_type=feedback_type
+            feedback_type=feedback_type,
+            uploaded_filename=uploaded_filename,
+            report_type=report_type
         )
-
         return send_file(
             zip_buffer,
             as_attachment=True,
             download_name='feedback_reports.zip',
             mimetype='application/zip'
         )
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -120,6 +121,8 @@ def generate_charts():
     file = request.files.get('file')
     choice = request.form.get('choice')
     feedback_type = request.form.get('feedbackType', 'stakeholder')
+    uploaded_filename = request.form.get('uploadedFilename', None)
+    report_type = request.form.get('reportType', None)
 
     if not file or not choice:
         return jsonify({"error": "Missing file or choice"}), 400
@@ -132,30 +135,22 @@ def generate_charts():
 
     tmp_file_path = None
     try:
-        # Save file to a temporary path
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
             tmp_file_path = tmp_file.name
             file.save(tmp_file_path)
 
-        # Generate chart files (filenames already stored in GridFS by plot_ratings)
-        chart_filenames = process_for_charts(tmp_file_path, choice, feedback_type)
-        print(f"Chart filenames returned: {chart_filenames}")
-
-        # Generate URLs to retrieve charts via /charts/<filename>
+        chart_filenames = process_for_charts(tmp_file_path, choice, feedback_type, uploaded_filename, report_type)
         chart_urls = [
             url_for('get_chart', filename=filename, _external=True)
             for filename in chart_filenames
         ]
-
         return jsonify({
             "chart_urls": chart_urls,
             "total_charts": len(chart_urls)
         })
-
     except Exception as e:
         print(f"Error in generate_charts: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
     finally:
         if tmp_file_path and os.path.exists(tmp_file_path):
             os.unlink(tmp_file_path)
