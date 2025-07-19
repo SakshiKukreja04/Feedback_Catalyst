@@ -11,6 +11,9 @@ const Report = () => {
   const [reportType, setReportType] = useState('generalized');
   const [chartUrls, setChartUrls] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState([]); // Store multiple files for stakeholder
+  const [uploadedFilenames, setUploadedFilenames] = useState([]); // Store backend filenames
+  const [fileHeadersList, setFileHeadersList] = useState([]); // Store headers for each file
 
   const handleFeedbackTypeChange = (type) => {
     setFeedbackType(type);
@@ -25,56 +28,56 @@ const Report = () => {
   };
 
   const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+    const files = Array.from(event.target.files);
+    if (!files.length) return;
 
     setChartUrls([]);
     setIsUploading(true);
-    setUploadStatus({ type: 'loading', message: 'Uploading file...' });
+    setUploadStatus({ type: 'loading', message: 'Uploading file(s)...' });
 
     try {
       const validTypes = ['.csv', '.xlsx'];
-      const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-      if (!validTypes.includes(fileExtension)) {
-        throw new Error('Please upload a CSV or Excel file');
+      const tooLarge = files.find(file => file.size > 5 * 1024 * 1024);
+      if (tooLarge) throw new Error('Each file must be less than 5MB');
+      const invalid = files.find(file => !validTypes.includes(file.name.substring(file.name.lastIndexOf('.')).toLowerCase()));
+      if (invalid) throw new Error('All files must be .csv or .xlsx');
+
+      let filenames = [];
+      let headersList = [];
+      for (const file of files) {
+        // Always use base filename (no folder path)
+        const baseFilename = file.name.split(/[/\\]/).pop();
+        const formData = new FormData();
+        formData.append('file', file);
+        const uploadResponse = await fetch('http://localhost:5001/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          throw new Error(`Upload failed (Status: ${uploadResponse.status}): ${errorText}`);
+        }
+        const uploadData = await uploadResponse.json();
+        filenames.push(baseFilename);
+        // Get headers for each file using base filename
+        const headersResponse = await fetch(`http://localhost:5001/headers/${encodeURIComponent(baseFilename)}`);
+        if (!headersResponse.ok) {
+          const errorText = await headersResponse.text();
+          throw new Error(`Failed to get headers (Status: ${headersResponse.status}): ${errorText}`);
+        }
+        const headersData = await headersResponse.json();
+        headersList.push(headersData.headers);
       }
-
-      if (file.size > 5 * 1024 * 1024) {
-        throw new Error('File size should be less than 5MB');
-      }
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // --- Upload Request ---
-      const uploadResponse = await fetch('http://localhost:5001/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        throw new Error(`Upload failed (Status: ${uploadResponse.status}): ${errorText}`);
-      }
-      
-      const uploadData = await uploadResponse.json();
-      setUploadedFilename(uploadData.filename);
-
-      // --- Headers Request ---
-      const headersResponse = await fetch(`http://localhost:5001/headers/${uploadData.filename}`);
-      if (!headersResponse.ok) {
-        const errorText = await headersResponse.text();
-        throw new Error(`Failed to get headers (Status: ${headersResponse.status}): ${errorText}`);
-      }
-
-      const headersData = await headersResponse.json();
-      setFileHeaders(headersData.headers);
-      setUploadStatus({ type: 'success', message: 'File uploaded successfully! You can now generate a report or view charts.' });
-
+      setUploadedFiles(files);
+      setUploadedFilenames(filenames);
+      setFileHeadersList(headersList);
+      setFileHeaders(headersList[0] || []); // For UI compatibility, use first file's headers
+      setUploadedFilename(filenames[0] || '');
+      setUploadStatus({ type: 'success', message: 'Files uploaded successfully! You can now generate a report or view charts.' });
     } catch (error) {
       let message = error.message;
       if (error instanceof SyntaxError) {
-          message = 'Received an invalid response from the server (likely an HTML error page instead of JSON). Please ensure the backend server is running the correct code and check its console for errors.';
+        message = 'Received an invalid response from the server (likely an HTML error page instead of JSON). Please ensure the backend server is running the correct code and check its console for errors.';
       }
       setUploadStatus({ type: 'error', message: message });
     } finally {
@@ -90,7 +93,7 @@ const Report = () => {
 
   const handleGenerate = async (e) => {
     e.preventDefault();
-    if (!isValid || !fileInputRef.current.files[0]) return;
+    if (!isValid || (feedbackType === 'stakeholder' && uploadedFiles.length === 0) || (feedbackType === 'subject' && !fileInputRef.current.files[0])) return;
 
     setIsGenerating(true);
     setChartUrls([]);
@@ -98,13 +101,19 @@ const Report = () => {
 
     try {
       const formData = new FormData();
-      formData.append('file', fileInputRef.current.files[0]);
+      if (feedbackType === 'stakeholder') {
+        uploadedFiles.forEach(file => formData.append('files[]', file));
+        formData.append('uploadedFilenames', JSON.stringify(uploadedFilenames));
+      } else {
+        formData.append('file', fileInputRef.current.files[0]);
+        formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, ""));
+      }
       formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
-      formData.append('feedbackType', feedbackType); // Send feedback type to backend
-      formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, "")); // file name without extension
+      formData.append('feedbackType', feedbackType);
       formData.append('reportType', reportType);
 
-      const response = await fetch('http://localhost:5001/generate-report', {
+      const endpoint = (feedbackType === 'stakeholder') ? 'http://localhost:5001/api/generate-stakeholder-report' : 'http://localhost:5001/generate-report';
+      const response = await fetch(endpoint, {
         method: 'POST',
         body: formData,
       });
@@ -123,11 +132,10 @@ const Report = () => {
       a.click();
       a.remove();
       setUploadStatus({ type: 'success', message: '✅ Report generated and downloaded.' });
-
     } catch (error) {
-        setUploadStatus({ type: 'error', message: error.message });
+      setUploadStatus({ type: 'error', message: error.message });
     } finally {
-        setIsGenerating(false);
+      setIsGenerating(false);
     }
   };
 
@@ -225,6 +233,9 @@ const Report = () => {
             onChange={handleFileUpload}
             accept=".csv,.xlsx"
             style={{ display: 'none' }}
+            multiple={feedbackType === 'stakeholder'}
+            webkitdirectory={feedbackType === 'stakeholder' ? '' : undefined}
+            directory={feedbackType === 'stakeholder' ? '' : undefined}
           />
           <p className="file-types">Supports .csv and .xlsx formats (max 5MB)</p>
           {uploadStatus && (
