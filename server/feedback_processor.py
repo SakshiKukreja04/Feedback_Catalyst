@@ -21,7 +21,7 @@ try:
         genai.configure(api_key=os.environ['GEMINI_API_KEY'])
     else:
         # Fallback for local testing - replace with your key
-        genai.configure(api_key="AIzaSyChRdH4CqkQF_4JC9IMBNptsXDw0JLMBrA")
+        genai.configure(api_key="AIzaSyCaCHAUd-8dkb4OtkH-tqOklwADUr7pbIY")
     model = genai.GenerativeModel("gemini-1.5-flash-latest")
 except Exception as e:
     print(f"Could not configure Gemini. AI features will fail. Error: {e}")
@@ -119,6 +119,7 @@ Feedback suggestions:
         return "Summary could not be generated."
 
 def detect_likert_categories_with_gemini_subject(df):
+    import ast
     if not model: return {}
     sample = df.sample(min(5, len(df))).to_string(index=False)
     prompt = f"""
@@ -146,12 +147,26 @@ Sample:
     try:
         response = model.generate_content(prompt)
         result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip()).strip()
-        label_mapping = json.loads(result_text)
-        # Fallback to summarize_label if label is empty or too long
-        for k, v in label_mapping.items():
-            if not v or len(v.split()) > 3:
-                label_mapping[k] = summarize_label(k)
-        return label_mapping
+        # Extract only the dictionary portion from the output
+        if '{' in result_text and '}' in result_text:
+            start = result_text.find('{')
+            end = result_text.rfind('}') + 1
+            dict_str = result_text[start:end]
+            try:
+                label_mapping = ast.literal_eval(dict_str)
+                # Fallback to summarize_label if label is empty or too long
+                for k, v in label_mapping.items():
+                    if not v or len(str(v).split()) > 3:
+                        label_mapping[k] = summarize_label(k)
+                return label_mapping
+            except Exception as e:
+                print("Failed to parse Gemini dictionary output.")
+                print(f"Raw output:\n{response.text}")
+                return {}
+        else:
+            print("No dictionary found in Gemini output.")
+            print(f"Raw output:\n{response.text}")
+            return {}
     except Exception as e:
         print("Gemini failed. Raw output:")
         print(response.text)

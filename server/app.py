@@ -9,6 +9,7 @@ import gridfs
 from io import BytesIO
 import tempfile
 from flask import url_for  
+import zipfile
 
 
 app = Flask(__name__)
@@ -59,7 +60,7 @@ def upload_file():
         return jsonify({"error": str(e)}), 500
 
 # 2) Given a filename, return its column headers
-@app.route('/headers/<filename>', methods=['GET'])
+@app.route('/headers/<path:filename>', methods=['GET'])
 def get_headers(filename):
     try:
         # Find file in GridFS
@@ -83,14 +84,14 @@ def get_headers(filename):
 # 3) Generate the report ZIP using the file from MongoDB + choice + feedback type
 @app.route('/generate-report', methods=['POST'])
 def generate_report():
-    file = request.files.get('file')
-    choice = request.form.get('choice')
     feedback_type = request.form.get('feedbackType', 'stakeholder')
-    uploaded_filename = request.form.get('uploadedFilename', None)
+    choice = request.form.get('choice')
     report_type = request.form.get('reportType', None)
+    uploaded_filenames = request.form.get('uploadedFilenames', None)
+    uploaded_filename = request.form.get('uploadedFilename', None)
 
-    if not file or not choice:
-        return jsonify({"error": "Missing file or choice"}), 400
+    if not choice:
+        return jsonify({"error": "Missing choice"}), 400
 
     if choice not in ['1', '2']:
         return jsonify({"error": "Invalid choice parameter"}), 400
@@ -99,20 +100,112 @@ def generate_report():
         return jsonify({"error": "Invalid feedback type"}), 400
 
     try:
-        zip_buffer = process_feedback(
-            file_bytes=file.stream,
-            filename=file.filename,
-            choice=choice,
-            feedback_type=feedback_type,
-            uploaded_filename=uploaded_filename,
-            report_type=report_type
-        )
-        return send_file(
-            zip_buffer,
-            as_attachment=True,
-            download_name='feedback_reports.zip',
-            mimetype='application/zip'
-        )
+        if feedback_type == 'stakeholder' and 'files[]' in request.files:
+            files = request.files.getlist('files[]')
+            filenames = []
+            if uploaded_filenames:
+                try:
+                    filenames = list(eval(uploaded_filenames))
+                except Exception:
+                    filenames = []
+            output_pdfs = []
+            for idx, file in enumerate(files):
+                fname = filenames[idx] if idx < len(filenames) else file.filename
+                pdf_zip = process_feedback(
+                    file_bytes=file.stream,
+                    filename=file.filename,
+                    choice=choice,
+                    feedback_type=feedback_type,
+                    uploaded_filename=fname,
+                    report_type=report_type
+                )
+                # pdf_zip is a BytesIO zip with one or more PDFs inside
+                # Extract PDFs from this zip and add to output_pdfs
+                with zipfile.ZipFile(pdf_zip, 'r') as zf:
+                    for name in zf.namelist():
+                        output_pdfs.append((name, zf.read(name)))
+            # Bundle all PDFs into a single ZIP
+            final_zip = BytesIO()
+            with zipfile.ZipFile(final_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for name, data in output_pdfs:
+                    zipf.writestr(name, data)
+            final_zip.seek(0)
+            return send_file(
+                final_zip,
+                as_attachment=True,
+                download_name='feedback_reports.zip',
+                mimetype='application/zip'
+            )
+        else:
+            # subject feedback or fallback to single file
+            file = request.files.get('file')
+            if not file:
+                return jsonify({"error": "Missing file"}), 400
+            zip_buffer = process_feedback(
+                file_bytes=file.stream,
+                filename=file.filename,
+                choice=choice,
+                feedback_type=feedback_type,
+                uploaded_filename=uploaded_filename,
+                report_type=report_type
+            )
+            return send_file(
+                zip_buffer,
+                as_attachment=True,
+                download_name='feedback_reports.zip',
+                mimetype='application/zip'
+            )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/generate-stakeholder-report', methods=['POST'])
+def generate_stakeholder_report():
+    choice = request.form.get('choice')
+    report_type = request.form.get('reportType', None)
+    uploaded_filenames = request.form.get('uploadedFilenames', None)
+    feedback_type = 'stakeholder'
+
+    if not choice:
+        return jsonify({"error": "Missing choice"}), 400
+    if choice not in ['1', '2']:
+        return jsonify({"error": "Invalid choice parameter"}), 400
+
+    try:
+        if 'files[]' in request.files or 'files' in request.files:
+            files = request.files.getlist('files[]') or request.files.getlist('files')
+            filenames = []
+            if uploaded_filenames:
+                try:
+                    filenames = list(eval(uploaded_filenames))
+                except Exception:
+                    filenames = []
+            output_pdfs = []
+            for idx, file in enumerate(files):
+                fname = filenames[idx] if idx < len(filenames) else file.filename
+                pdf_zip = process_feedback(
+                    file_bytes=file.stream,
+                    filename=file.filename,
+                    choice=choice,
+                    feedback_type=feedback_type,
+                    uploaded_filename=fname,
+                    report_type=report_type
+                )
+                with zipfile.ZipFile(pdf_zip, 'r') as zf:
+                    for name in zf.namelist():
+                        output_pdfs.append((name, zf.read(name)))
+            final_zip = BytesIO()
+            with zipfile.ZipFile(final_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for name, data in output_pdfs:
+                    zipf.writestr(name, data)
+            final_zip.seek(0)
+            return send_file(
+                final_zip,
+                as_attachment=True,
+                download_name='feedback_reports.zip',
+                mimetype='application/zip'
+            )
+        else:
+            return jsonify({"error": "No files uploaded"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
