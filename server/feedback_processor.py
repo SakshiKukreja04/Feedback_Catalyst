@@ -456,11 +456,16 @@ class SubjectPDF(FPDF):
 def generate_stakeholder_report(sub_df, name, value, category_groups, short_labels, uploaded_filename=None, report_type=None):
     pdf = StakeholderPDF()
     pdf.add_page()
-    # Use only report type and report name for the main heading
-    report_type_str = report_type.capitalize() if report_type else 'Ratings'
+    # Compose heading to match view charts
+    title_parts = [uploaded_filename or name]
+    if report_type:
+        title_parts.append(report_type.capitalize())
+    if str(value) and str(value).lower() not in ['all_students', 'all students']:
+        title_parts.append(f"{name}: {value}")
+    heading = " | ".join(title_parts)
     report_name = uploaded_filename or name
     pdf.set_font('Arial', 'B', 14)
-    pdf.cell(0, 10, sanitize_text(f"{report_type_str} - {report_name}"), ln=1, align='C')
+    pdf.cell(0, 10, sanitize_text(heading), ln=1, align='C')
     pdf.ln(10)
     chart_files = []
     for category, cols in category_groups.items():
@@ -474,7 +479,12 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
             pdf.ln(10)
             # Chart: use concise labels
             chart_df = generate_summary_table(sub_df, valid_cols, short_labels, 'stakeholder', use_short_labels=True)
-            chart_file = plot_ratings(chart_df, report_type_str, report_name, 'stakeholder')
+            # Make chart filename unique per group, category, and value
+            if value:
+                unique_report_name = f"{report_name}__{name}__{value}__{category}"
+            else:
+                unique_report_name = f"{report_name}__{category}"
+            chart_file = plot_ratings(chart_df, report_type, unique_report_name, 'stakeholder')
             if chart_file:
                 chart_files.append(chart_file)
     for chart in chart_files:
@@ -485,7 +495,11 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
         pdf.add_summary(suggestion_summary)
     output_dir = "feedback_catalyst"
     os.makedirs(output_dir, exist_ok=True)
-    safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type_str}_{report_name}")
+    # Make output filename unique per field
+    if value:
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type}_{report_name}_{name}_{value}")
+    else:
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type}_{report_name}")
     pdf_path = os.path.join(output_dir, f"{safe_title}_report.pdf")
     pdf.output(pdf_path)
     return pdf_path
@@ -508,7 +522,12 @@ def generate_subject_report(sub_df, name, value, category_groups, short_labels, 
         if not summary_df.empty:
             # Chart: use concise labels
             chart_df = generate_summary_table(sub_df, valid_cols, short_labels, 'subject', use_short_labels=True)
-            chart_path = plot_ratings(chart_df, report_type_str, report_name, 'subject')
+            # Make chart filename unique per group and category
+            if value:
+                unique_report_name = f"{report_name}__{value}__{category}"
+            else:
+                unique_report_name = f"{report_name}__{category}"
+            chart_path = plot_ratings(chart_df, report_type_str, unique_report_name, 'subject')
             summary_tables.append((category, summary_df))
             if chart_path:
                 chart_paths.append((category, chart_path))
@@ -582,6 +601,7 @@ def process_feedback(file_bytes, filename, choice, feedback_type='stakeholder', 
             pdf_path = generate_stakeholder_report(df, 'Overall', 'All Students', category_groups, short_labels, uploaded_filename, report_type)
         else:
             pdf_path = generate_subject_report(df, 'Overall', 'All Students', category_groups, short_labels, uploaded_filename, report_type)
+        print(f"PDF generated at: {pdf_path}, exists: {os.path.exists(pdf_path)}")
         output_pdfs.append(pdf_path)
     elif choice == '2':
         possible_group_cols = ['Branch', 'Department', 'Subject', 'Faculty', 'Class']
@@ -593,15 +613,25 @@ def process_feedback(file_bytes, filename, choice, feedback_type='stakeholder', 
                 pdf_path = generate_stakeholder_report(group_df, group_col, value, category_groups, short_labels, uploaded_filename, report_type)
             else:
                 pdf_path = generate_subject_report(group_df, group_col, value, category_groups, short_labels, uploaded_filename, report_type)
+            print(f"PDF generated at: {pdf_path}, exists: {os.path.exists(pdf_path)}")
             output_pdfs.append(pdf_path)
     else:
         raise ValueError("Invalid choice. Must be '1' or '2'.")
+    output_dir = "feedback_catalyst"
+    os.makedirs(output_dir, exist_ok=True)
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for pdf_path in output_pdfs:
             arcname = os.path.basename(pdf_path)
-            with open(pdf_path, 'rb') as f:
-                zipf.writestr(arcname, f.read())
+            print(f"Trying to zip: {pdf_path}, exists: {os.path.exists(pdf_path)}")
+            if not os.path.exists(pdf_path):
+                print(f"ERROR: PDF file not found, skipping: {pdf_path}")
+                continue
+            try:
+                with open(pdf_path, 'rb') as f:
+                    zipf.writestr(arcname, f.read())
+            except Exception as e:
+                print(f"ERROR: Failed to add {pdf_path} to zip: {e}")
     zip_buffer.seek(0)
     if not save_to_disk:
         for pdf_path in output_pdfs:
@@ -611,7 +641,9 @@ def process_feedback(file_bytes, filename, choice, feedback_type='stakeholder', 
 
 def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_filename=None, report_type=None, save_chart_fn=None):
     df, category_groups, short_labels = _get_data_and_groups(file_path, feedback_type)
-    branch_col = next((col for col in df.columns if "branch" in col.lower()), None)
+    # Use the same group column logic as process_feedback
+    possible_group_cols = ['Branch', 'Department', 'Subject', 'Faculty', 'Class']
+    group_col = next((col for col in df.columns if col.strip().lower() in [x.lower() for x in possible_group_cols]), None)
     chart_files = []
     def generate_and_collect_charts(sub_df, name, value):
         title_parts = [uploaded_filename or name]
@@ -632,10 +664,9 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
                     chart_files.append(chart_file)
     if choice == "1":
         generate_and_collect_charts(df, "Overall", "All_Students")
-    elif choice == "2" and branch_col:
-        for branch in df[branch_col].dropna().unique():
-            branch_df = df[df[branch_col] == branch]
-            generate_and_collect_charts(branch_df, "Branch", branch)
+    elif choice == "2" and group_col:
+        for value, group_df in df.groupby(group_col):
+            generate_and_collect_charts(group_df, group_col, value)
     else:
         generate_and_collect_charts(df, "Overall", "All_Students")
     return chart_files   
