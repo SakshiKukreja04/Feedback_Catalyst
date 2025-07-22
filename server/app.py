@@ -13,8 +13,7 @@ import zipfile
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
-
+CORS(app, resources={r"/*": {"origins": "*"}})
 # MongoDB setup
 client = MongoClient('mongodb://localhost:27017/')  
 db = client['feedback_db']  
@@ -211,14 +210,14 @@ def generate_stakeholder_report():
 
 @app.route('/generate-charts', methods=['POST'])
 def generate_charts():
-    file = request.files.get('file')
+    files = request.files.getlist('file')  # Accept multiple files
     choice = request.form.get('choice')
     feedback_type = request.form.get('feedbackType', 'stakeholder')
     uploaded_filename = request.form.get('uploadedFilename', None)
     report_type = request.form.get('reportType', None)
 
-    if not file or not choice:
-        return jsonify({"error": "Missing file or choice"}), 400
+    if not files or not choice:
+        return jsonify({"error": "Missing file(s) or choice"}), 400
 
     if choice not in ['1', '2']:
         return jsonify({"error": "Invalid choice parameter"}), 400
@@ -226,27 +225,57 @@ def generate_charts():
     if feedback_type not in ['stakeholder', 'subject']:
         return jsonify({"error": "Invalid feedback type"}), 400
 
-    tmp_file_path = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
-            tmp_file_path = tmp_file.name
-            file.save(tmp_file_path)
+    chart_urls = []
+    tmp_paths = []
 
-        chart_filenames = process_for_charts(tmp_file_path, choice, feedback_type, uploaded_filename, report_type)
-        chart_urls = [
-            url_for('get_chart', filename=filename, _external=True)
-            for filename in chart_filenames
-        ]
+    try:
+        if feedback_type == 'stakeholder':
+            for file in files:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
+                    tmp_path = tmp_file.name
+                    file.save(tmp_path)
+                    tmp_paths.append(tmp_path)
+
+                chart_filenames = process_for_charts(
+                    tmp_path, choice, feedback_type, uploaded_filename, report_type
+                )
+
+                chart_urls.extend([
+                    url_for('get_chart', filename=filename, _external=True)
+                    for filename in chart_filenames
+                ])
+        else:  # subject feedback supports only one file
+            if len(files) > 1:
+                return jsonify({"error": "Only one file allowed for 'subject' feedback"}), 400
+
+            file = files[0]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
+                tmp_path = tmp_file.name
+                file.save(tmp_path)
+                tmp_paths.append(tmp_path)
+
+            chart_filenames = process_for_charts(
+                tmp_path, choice, feedback_type, uploaded_filename, report_type
+            )
+
+            chart_urls.extend([
+                url_for('get_chart', filename=filename, _external=True)
+                for filename in chart_filenames
+            ])
+
         return jsonify({
             "chart_urls": chart_urls,
             "total_charts": len(chart_urls)
         })
+
     except Exception as e:
         print(f"Error in generate_charts: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
     finally:
-        if tmp_file_path and os.path.exists(tmp_file_path):
-            os.unlink(tmp_file_path)
+        for path in tmp_paths:
+            if os.path.exists(path):
+                os.unlink(path)
 
 
 @app.route('/charts/<filename>')
@@ -271,6 +300,98 @@ def get_chart(filename):
     except Exception as e:
         print(f"Error in get_chart: {str(e)}")  # Add logging
         return jsonify({"error": str(e)}), 500
+
+from feedback_processor import summarize_suggestions, generate_implementation_plan_gemini, find_common_themes_gemini
+from fpdf import FPDF
+from flask import Flask, request, send_file, jsonify
+from fpdf import FPDF
+import pandas as pd
+from io import BytesIO
+
+@app.route('/get-suggestions', methods=['POST'])
+def get_suggestions():
+    feedback_type = request.form.get('feedbackType', 'stakeholder')
+    suggestions = []
+
+    try:
+        if feedback_type == 'stakeholder' and 'files[]' in request.files:
+            # Stakeholder: Multiple files
+            files = request.files.getlist('files[]')
+            filenames = request.form.get('uploadedFilenames')
+            filenames = eval(filenames) if filenames else [f.filename for f in files]
+
+            for idx, file in enumerate(files):
+                df = pd.read_excel(file) if file.filename.lower().endswith('.xlsx') else pd.read_csv(file)
+                suggestion_col = next((col for col in df.columns if 'suggestion' in col.lower()), None)
+                if suggestion_col:
+                    summary = summarize_suggestions(df, suggestion_col)
+                    suggestions.append((filenames[idx], summary))
+
+            # Get common themes and implementation plan using Gemini
+            all_summary_texts = [summary for _, summary in suggestions]
+            common_themes = find_common_themes_gemini(all_summary_texts)
+            implementation_plan = generate_implementation_plan_gemini(common_themes)
+
+        else:
+            # Single file upload (non-stakeholder or fallback)
+            file = request.files.get('file')
+            filename = request.form.get('uploadedFilename', file.filename)
+            df = pd.read_excel(file) if file.filename.lower().endswith('.xlsx') else pd.read_csv(file)
+            suggestion_col = next((col for col in df.columns if 'suggestion' in col.lower()), None)
+            if suggestion_col:
+                summary = summarize_suggestions(df, suggestion_col)
+                suggestions.append((filename, summary))
+
+                # Generate implementation plan even for single summary
+                implementation_plan = generate_implementation_plan_gemini(summary)
+            else:
+                implementation_plan = None
+
+            # No common themes for single file
+            common_themes = None
+
+        # Generate PDF
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=14)
+        pdf.cell(0, 10, "Suggestions Summary", ln=True, align='C')
+        pdf.ln(10)
+
+        for fname, summary in suggestions:
+            pdf.set_font("Arial", style='B', size=12)
+            pdf.cell(0, 10, f"File: {fname}", ln=True)
+            pdf.set_font("Arial", size=11)
+            for line in summary.split('\n'):
+                pdf.multi_cell(0, 8, line)
+            pdf.ln(5)
+
+        # Stakeholder common themes
+        if common_themes:
+            pdf.set_font("Arial", style='B', size=12)
+            pdf.cell(0, 10, "Common Themes Across All Files:", ln=True)
+            pdf.set_font("Arial", size=11)
+            for line in common_themes.split('\n'):
+                pdf.multi_cell(0, 8, line)
+            pdf.ln(5)
+
+        # Implementation plan (always included if generated)
+        if implementation_plan:
+            pdf.set_font("Arial", style='B', size=12)
+            pdf.cell(0, 10, "Suggested Implementation Plan:", ln=True)
+            pdf.set_font("Arial", size=11)
+            for line in implementation_plan.split('\n'):
+                pdf.multi_cell(0, 8, line)
+            pdf.ln(10)
+
+        # Output to buffer
+        pdf_bytes = pdf.output(dest='S').encode('latin1')
+        pdf_buffer = BytesIO(pdf_bytes)
+        pdf_buffer.seek(0)
+
+        return send_file(pdf_buffer, as_attachment=True, download_name="Suggestions_Summary.pdf", mimetype="application/pdf")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
         
 if __name__ == '__main__':
     app.run(port=5001, debug=True)

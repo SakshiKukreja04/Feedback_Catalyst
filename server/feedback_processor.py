@@ -269,15 +269,18 @@ def summarize_label(label, max_keywords=2):
     return ' '.join(filtered)
 
 # In plot_ratings, apply summarize_label only to df_plot.index for x-axis labels
-
 def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'):
-    if score_df.empty: return None
+    if score_df.empty:
+        return None
+
     plot_cols = [col for col in [5, 4, 3, 2, 1] if col in score_df.columns]
-    concise_labels = [summarize_label(cat) for cat in score_df['Category']]
+
+    # Use original category labels directly (no summarization)
     df_plot = score_df.set_index('Category')[plot_cols]
-    df_plot.index = concise_labels
-    # Chart title: Only report type and report name
+
+    # Chart title
     chart_title = f"{report_type} - {report_name}"
+
     if feedback_type == 'stakeholder':
         ax = df_plot.plot(kind='bar', figsize=(36, 14), colormap='viridis', width=0.4)
         for bars in ax.containers:
@@ -285,12 +288,12 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
         plt.title(chart_title, fontsize=28, weight='bold')
         plt.xlabel(report_type, fontsize=28)
         plt.ylabel("Number of Responses", fontsize=28)
-        plt.xticks(rotation=30, ha='right', fontsize=32)
+        plt.xticks(rotation=45, ha='right', fontsize=32)  # angled labels
         plt.yticks(fontsize=32)
         plt.legend(title='Rating', fontsize=24, title_fontsize=26)
         plt.grid(axis='y', linestyle='--', alpha=0.7)
         plt.tight_layout(pad=3.0)
-        plt.subplots_adjust(bottom=0.28)
+        plt.subplots_adjust(bottom=0.35)
     else:
         ax = df_plot.plot(kind='bar', figsize=(36, 14), width=0.4)
         for bars in ax.containers:
@@ -298,31 +301,38 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
         plt.title(chart_title, fontsize=28, weight='bold')
         plt.xlabel(report_type, fontsize=28)
         plt.ylabel("No. of Responses", fontsize=28)
-        plt.xticks(rotation=30, ha='right', fontsize=32)
+        plt.xticks(rotation=45, ha='right', fontsize=32)  # angled labels
         plt.yticks(fontsize=32)
         plt.legend(fontsize=24)
         plt.tight_layout()
-        plt.subplots_adjust(bottom=0.28)
+        plt.subplots_adjust(bottom=0.35)
+
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', report_type)
     safe_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', report_name)
     safe_filename = f"{safe_prefix}_{safe_name}.png"
+
     buffer = BytesIO()
     plt.savefig(buffer, format='png')
     buffer.seek(0)
+
     chart_id = fs_charts.put(
         buffer.getvalue(),
         filename=safe_filename,
         content_type='image/png'
     )
+
     charts_collection.insert_one({
         'chart_id': chart_id,
         'filename': safe_filename,
         'content_type': 'image/png',
         'size': len(buffer.getvalue())
     })
+
     plt.close()
     buffer.close()
+
     return safe_filename
+
 
 # pdf
 class StakeholderPDF(FPDF):
@@ -670,3 +680,78 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
     else:
         generate_and_collect_charts(df, "Overall", "All_Students")
     return chart_files   
+
+
+def summarize_suggestions(df, column_name):
+    if not model:
+        # Fallback: join all suggestions and return first 10 lines
+        suggestions = df[column_name].dropna().astype(str)
+        return "\n".join(suggestions.tolist()[:10])
+    suggestions = df[column_name].dropna().astype(str)
+    if suggestions.empty:
+        return "No suggestions found."
+    combined_text = "\n".join(suggestions.tolist()[:50])
+    prompt = f"""
+You are a helpful assistant.
+Given the following feedback suggestions from a student feedback form, write a grammatically correct, concise, and insightful summary.
+Feedback suggestions:
+{combined_text}
+"""
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini failed: {e}")
+        return "Could not summarize suggestions due to an error."
+
+# Function to find common parts/themes using Gemini
+def find_common_themes_gemini(summaries):
+    if not model:
+        return "Gemini model not available to extract common themes."
+
+    combined = "\n\n".join(summaries)
+    prompt = f"""
+You are an expert in feedback analysis.
+
+Below are summaries of feedback collected from multiple stakeholders. Analyze them and identify common themes or recurring suggestions. 
+List the themes in bullet points or as a concise comma-separated list.
+
+Feedback Summaries:
+{combined}
+"""
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini failed while extracting themes: {e}")
+        return "Could not extract common themes due to an error."
+
+
+# Function to generate implementation suggestions using Gemini
+def generate_implementation_plan_gemini(themes):
+    if not model:
+        return f"Model unavailable. Use these themes for implementation: {themes}"
+
+    prompt = f"""
+You are a strategy advisor for educational institutions.
+
+Based on the following recurring feedback themes: {themes}, suggest a brief and highly practical implementation plan.
+
+Requirements:
+- Maximum 5 bullet points
+- Each point must be 1–2 short sentences
+- Focus on actionable steps that are easy to understand and execute
+- Align with typical stakeholder expectations (students, faculty, admin)
+- Do not include long explanations or background information
+"""
+
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini failed while generating implementation plan: {e}")
+        return "Could not generate implementation plan due to an error."
+
+

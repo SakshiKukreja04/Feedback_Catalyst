@@ -182,6 +182,45 @@ const Report = () => {
     }
   };
 
+  // Add this handler in your Report component
+  const handleDownloadSuggestions = async () => {
+    setUploadStatus({ type: 'loading', message: 'Generating suggestions PDF...' });
+
+    try {
+      const formData = new FormData();
+      if (feedbackType === 'stakeholder') {
+        uploadedFiles.forEach(file => formData.append('files[]', file));
+        formData.append('uploadedFilenames', JSON.stringify(uploadedFilenames));
+      } else {
+        formData.append('file', fileInputRef.current.files[0]);
+        formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, ""));
+      }
+      formData.append('feedbackType', feedbackType);
+
+      const response = await fetch('http://localhost:5001/get-suggestions', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to generate suggestions PDF (Status: ${response.status}): ${errorText}`);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Suggestions_Summary.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setUploadStatus({ type: 'success', message: '✅ Suggestions PDF generated and downloaded.' });
+    } catch (error) {
+      setUploadStatus({ type: 'error', message: error.message });
+    } 
+  };
+
   return (
     <div className="report-container">
       <div className="report-header">
@@ -296,6 +335,13 @@ const Report = () => {
               disabled={isGenerating}
             >
               View Charts
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={handleDownloadSuggestions}
+              disabled={isGenerating}
+            >
+              Download Suggestions PDF
             </button>
           </div>
         </div>
