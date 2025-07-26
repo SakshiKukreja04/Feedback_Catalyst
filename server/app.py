@@ -238,7 +238,7 @@ def generate_charts():
                     tmp_paths.append(tmp_path)
 
                 chart_filenames = process_for_charts(
-                    tmp_path, choice, feedback_type, uploaded_filename, report_type
+                    tmp_path, choice, feedback_type, file.filename, report_type
                 )
 
                 chart_urls.extend([
