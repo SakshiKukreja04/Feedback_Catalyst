@@ -211,6 +211,7 @@ def generate_stakeholder_report():
 @app.route('/generate-charts', methods=['POST'])
 def generate_charts():
     files = request.files.getlist('file')  # Accept multiple files
+    print(f"Received files for chart generation", files)  # Add logging
     choice = request.form.get('choice')
     feedback_type = request.form.get('feedbackType', 'stakeholder')
     uploaded_filename = request.form.get('uploadedFilename', None)

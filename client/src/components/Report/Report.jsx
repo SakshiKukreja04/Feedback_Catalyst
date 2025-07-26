@@ -141,7 +141,7 @@ const Report = () => {
 
   const handleViewCharts = async (e) => {
     e.preventDefault();
-    if (!isValid || !fileInputRef.current.files[0]) return;
+    if (!isValid || !fileInputRef.current.files.length) return;
 
     setIsGenerating(true);
     setChartUrls([]);
@@ -149,10 +149,15 @@ const Report = () => {
 
     try {
         const formData = new FormData();
-        formData.append('file', fileInputRef.current.files[0]);
+        
+        const files = fileInputRef.current.files;
+        for (let i = 0; i < files.length; i++) {
+            formData.append('file', files[i]);  // ✅ Fix: append all files
+        }
+
         formData.append('choice', reportType === 'fieldwise' ? "2" : "1");
-        formData.append('feedbackType', feedbackType); // Send feedback type to backend
-        formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, "")); // file name without extension
+        formData.append('feedbackType', feedbackType);
+        formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, ""));
         formData.append('reportType', reportType);
 
         const response = await fetch('http://localhost:5001/generate-charts', {
@@ -166,10 +171,9 @@ const Report = () => {
         }
 
         const data = await response.json();
-        const urls = data.chart_urls; // ✅ this is the correct field name now
+        const urls = data.chart_urls;
         setChartUrls(urls);
         setUploadStatus({ type: 'success', message: 'Charts generated successfully!' });
-
 
     } catch (error) {
         let message = error.message;
@@ -180,7 +184,7 @@ const Report = () => {
     } finally {
         setIsGenerating(false);
     }
-  };
+};
 
   // Add this handler in your Report component
   const handleDownloadSuggestions = async () => {

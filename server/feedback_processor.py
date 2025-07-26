@@ -7,6 +7,7 @@ from io import BytesIO
 from pymongo import MongoClient
 import gridfs
 import matplotlib
+
 matplotlib.use('Agg')
 
 # MongoDB setup
@@ -199,12 +200,16 @@ def strip_category_prefix(text):
         return match2.group(1).strip()
     return str(text).strip()
 
-#table and chart
-def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='stakeholder', use_short_labels=True):
+def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='stakeholder'):
+    """
+    Generate summary table for BOTH charts and tables.
+    This ensures consistency between chart x-axis and table categories.
+    """
     summary = {}
     for col in category_cols:
         if col in sub_df.columns:
-            label = short_labels.get(col, col) if use_short_labels else col
+            # Always use short labels for consistency between charts and tables
+            label = short_labels.get(col, col)
             if feedback_type == 'stakeholder':
                 scores = pd.to_numeric(sub_df[col], errors='coerce').dropna()
                 scores = scores[scores.between(1, 5)].astype(int).value_counts().to_dict()
@@ -215,8 +220,10 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
                     continue
                 score_counts = cleaned.value_counts().to_dict()
                 summary[label] = {i: score_counts.get(i, 0) for i in range(1, 6)}
+    
     if not summary:
         return pd.DataFrame()
+    
     score_df = pd.DataFrame(summary).T.fillna(0).astype(int)
     score_df["Total"] = score_df[[5, 4, 3, 2, 1]].sum(axis=1)
     for i in range(5, 0, -1):
@@ -224,6 +231,7 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
             score_df[f"% of {i}"] = score_df.apply(
                 lambda row: round(row[i] * 100 / row["Total"], 2) if row["Total"] > 0 else 0, axis=1
             )
+    
     if feedback_type == 'stakeholder':
         cols_to_return = ["Category", "Total"]
         for i in range(5, 0, -1):
@@ -233,7 +241,6 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
     else:
         score_df = score_df.reset_index().rename(columns={"index": "Category"})
         return score_df[["Category", "Total", 5, "% of 5", 4, "% of 4", 3, "% of 3", 2, "% of 2", 1, "% of 1"]]
-
 
 def summarize_label(label, max_keywords=2):
     import string
@@ -268,14 +275,14 @@ def summarize_label(label, max_keywords=2):
         return 'General'
     return ' '.join(filtered)
 
-# In plot_ratings, apply summarize_label only to df_plot.index for x-axis labels
+# MODIFIED plot_ratings to use consistent labels
 def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'):
     if score_df.empty:
         return None
 
     plot_cols = [col for col in [5, 4, 3, 2, 1] if col in score_df.columns]
 
-    # Use original category labels directly (no summarization)
+    # Use the Category column as-is (which now contains short labels)
     df_plot = score_df.set_index('Category')[plot_cols]
 
     # Chart title
@@ -333,7 +340,6 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
 
     return safe_filename
 
-
 # pdf
 class StakeholderPDF(FPDF):
     def header(self):
@@ -365,9 +371,9 @@ class StakeholderPDF(FPDF):
         self.set_font('Arial', '', 8)
         for _, row in df.iterrows():
             y_before = self.get_y()
-            # Only show the question text, not the repeated category
-            question_text = strip_category_prefix(row.iloc[0])
-            self.multi_cell(first_col_width, row_height, sanitize_text(question_text), border=1)
+            # Use the category name as-is (now contains short labels)
+            category_text = str(row.iloc[0])
+            self.multi_cell(first_col_width, row_height, sanitize_text(category_text), border=1)
             y_after = self.get_y()
             x_after = self.get_x()
             self.set_xy(x_after + first_col_width, y_before)
@@ -425,9 +431,9 @@ class SubjectPDF(FPDF):
         for _, row in df.iterrows():
             x_start = self.get_x()
             y_start = self.get_y()
-            # Only show the question text, not the repeated category
-            question_text = strip_category_prefix(row.iloc[0])
-            lines = self.multi_cell(first_col_width, row_height, sanitize_text(question_text), split_only=True, border=1, align='L')
+            # Use the category name as-is (now contains short labels)
+            category_text = str(row.iloc[0])
+            lines = self.multi_cell(first_col_width, row_height, sanitize_text(category_text), split_only=True, border=1, align='L')
             height_needed = row_height * len(lines)
             if y_start + height_needed > self.h - self.b_margin:
                 self.add_page()
@@ -440,7 +446,7 @@ class SubjectPDF(FPDF):
                 x_start = self.get_x()
                 y_start = self.get_y()
             self.set_xy(x_start, y_start)
-            self.multi_cell(first_col_width, row_height, sanitize_text(question_text), border=1, align='L')
+            self.multi_cell(first_col_width, row_height, sanitize_text(category_text), border=1, align='L')
             self.set_xy(x_start + first_col_width, y_start)
             for item in row.iloc[1:]:
                 self.cell(other_col_width, height_needed, str(item), border=1, align='C')
@@ -462,7 +468,6 @@ class SubjectPDF(FPDF):
         except Exception as e:
             print(f"Error inserting image from MongoDB: {e}")
 
-# report generation
 def generate_stakeholder_report(sub_df, name, value, category_groups, short_labels, uploaded_filename=None, report_type=None):
     pdf = StakeholderPDF()
     pdf.add_page()
@@ -477,32 +482,36 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
     pdf.set_font('Arial', 'B', 14)
     pdf.cell(0, 10, sanitize_text(heading), ln=1, align='C')
     pdf.ln(10)
+
     chart_files = []
     for category, cols in category_groups.items():
         valid_cols = [col for col in cols if col in sub_df.columns]
         if not valid_cols: continue
-        # Table: use original headers
-        summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'stakeholder', use_short_labels=False)
+
+        # Generate summary using short labels - same for both table and chart
+        summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'stakeholder')
         if not summary_df.empty:
             pdf.section_title(f"{category} Feedback Summary")
             pdf.table(summary_df)
             pdf.ln(10)
-            # Chart: use concise labels
-            chart_df = generate_summary_table(sub_df, valid_cols, short_labels, 'stakeholder', use_short_labels=True)
-            # Make chart filename unique per group, category, and value
+
+            # Chart uses the SAME summary_df, ensuring consistency
             if value:
                 unique_report_name = f"{report_name}__{name}__{value}__{category}"
             else:
                 unique_report_name = f"{report_name}__{category}"
-            chart_file = plot_ratings(chart_df, report_type, unique_report_name, 'stakeholder')
+            chart_file = plot_ratings(summary_df, report_type, unique_report_name, 'stakeholder')
             if chart_file:
                 chart_files.append(chart_file)
+
     for chart in chart_files:
         pdf.insert_image_from_mongodb(chart)
+
     suggestion_col = next((col for col in sub_df.columns if 'suggestion' in col.lower()), None)
     if suggestion_col:
         suggestion_summary = summarize_suggestions_with_gemini(sub_df, suggestion_col)
         pdf.add_summary(suggestion_summary)
+
     output_dir = "feedback_catalyst"
     os.makedirs(output_dir, exist_ok=True)
     # Make output filename unique per field
@@ -522,31 +531,34 @@ def generate_subject_report(sub_df, name, value, category_groups, short_labels, 
     report_name = uploaded_filename or name
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(0, 10, sanitize_text(f"{report_type_str} - {report_name}"), ln=1)
+
     summary_tables, chart_paths = [], []
     for category, cols in category_groups.items():
         valid_cols = [col for col in cols if col in sub_df.columns]
         if not valid_cols:
             continue
-        # Table: use original headers
-        summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'subject', use_short_labels=False)
+
+        # Generate summary using short labels - same for both table and chart
+        summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'subject')
         if not summary_df.empty:
-            # Chart: use concise labels
-            chart_df = generate_summary_table(sub_df, valid_cols, short_labels, 'subject', use_short_labels=True)
-            # Make chart filename unique per group and category
+            # Chart uses the SAME summary_df, ensuring consistency
             if value:
                 unique_report_name = f"{report_name}__{value}__{category}"
             else:
                 unique_report_name = f"{report_name}__{category}"
-            chart_path = plot_ratings(chart_df, report_type_str, unique_report_name, 'subject')
+            chart_path = plot_ratings(summary_df, report_type_str, unique_report_name, 'subject')
             summary_tables.append((category, summary_df))
             if chart_path:
                 chart_paths.append((category, chart_path))
+
     for category, df_summary in summary_tables:
         pdf.section_title(f"{category} Feedback Summary")
         pdf.table(df_summary, pdf.get_y() + 5)
         pdf.ln(10)
+
     for _, chart in chart_paths:
         pdf.insert_image_from_mongodb(chart)
+
     safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type_str}_{report_name}")
     output_dir = "feedback_catalyst"
     os.makedirs(output_dir, exist_ok=True)
@@ -627,6 +639,7 @@ def process_feedback(file_bytes, filename, choice, feedback_type='stakeholder', 
             output_pdfs.append(pdf_path)
     else:
         raise ValueError("Invalid choice. Must be '1' or '2'.")
+
     output_dir = "feedback_catalyst"
     os.makedirs(output_dir, exist_ok=True)
     zip_buffer = BytesIO()
@@ -655,6 +668,7 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
     possible_group_cols = ['Branch', 'Department', 'Subject', 'Faculty', 'Class']
     group_col = next((col for col in df.columns if col.strip().lower() in [x.lower() for x in possible_group_cols]), None)
     chart_files = []
+
     def generate_and_collect_charts(sub_df, name, value):
         title_parts = [uploaded_filename or name]
         if report_type:
@@ -666,12 +680,13 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
             valid_cols = [col for col in cols if col in sub_df.columns]
             if not valid_cols:
                 continue
-            # For charts, always use concise labels
-            chart_df = generate_summary_table(sub_df, valid_cols, short_labels, feedback_type, use_short_labels=True)
+            # Use same summary generation approach for consistency
+            chart_df = generate_summary_table(sub_df, valid_cols, short_labels, feedback_type)
             if not chart_df.empty:
                 chart_file = plot_ratings(chart_df, category, title, feedback_type)
                 if chart_file:
                     chart_files.append(chart_file)
+
     if choice == "1":
         generate_and_collect_charts(df, "Overall", "All_Students")
     elif choice == "2" and group_col:
@@ -679,8 +694,8 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
             generate_and_collect_charts(group_df, group_col, value)
     else:
         generate_and_collect_charts(df, "Overall", "All_Students")
-    return chart_files   
 
+    return chart_files   
 
 def summarize_suggestions(df, column_name):
     if not model:
@@ -727,7 +742,6 @@ Feedback Summaries:
         print(f"Gemini failed while extracting themes: {e}")
         return "Could not extract common themes due to an error."
 
-
 # Function to generate implementation suggestions using Gemini
 def generate_implementation_plan_gemini(themes):
     if not model:
@@ -746,12 +760,9 @@ Requirements:
 - Do not include long explanations or background information
 """
 
-
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
         print(f"Gemini failed while generating implementation plan: {e}")
         return "Could not generate implementation plan due to an error."
-
-
