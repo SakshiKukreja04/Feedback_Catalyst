@@ -166,10 +166,6 @@
   background: var(--primary-color);
   border: none;
   font-weight: 600;
-  transition: background 0.2s, color 0.2s;
+
 }
 
-.header .btn-secondary:hover {
-  background: var(--secondary-color);
-  color: #fff;
-}

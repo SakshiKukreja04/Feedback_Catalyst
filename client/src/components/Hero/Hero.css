@@ -74,6 +74,10 @@
   max-width: 600px;
   height: auto;
   object-fit: contain;
+  /* Enhanced for GSAP animations */
+  will-change: transform, opacity, box-shadow;
+  transform-origin: center center;
+  transition: none; /* Disable CSS transitions to let GSAP handle animations */
 }
 
 @media (max-width: 1200px) {

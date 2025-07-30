@@ -141,7 +141,7 @@ const Report = () => {
 
   const handleViewCharts = async (e) => {
     e.preventDefault();
-    if (!isValid || !fileInputRef.current.files.length) return;
+    if (!isValid || (feedbackType === 'stakeholder' && uploadedFiles.length === 0) || (feedbackType === 'subject' && !fileInputRef.current.files[0])) return;
 
     setIsGenerating(true);
     setChartUrls([]);
@@ -150,9 +150,15 @@ const Report = () => {
     try {
         const formData = new FormData();
         
-        const files = fileInputRef.current.files;
-        for (let i = 0; i < files.length; i++) {
-            formData.append('file', files[i]);  // ✅ Fix: append all files
+        if (feedbackType === 'stakeholder') {
+            // For stakeholder feedback, use uploadedFiles
+            uploadedFiles.forEach(file => formData.append('file', file));
+        } else {
+            // For subject feedback, use fileInputRef.current.files
+            const files = fileInputRef.current.files;
+            for (let i = 0; i < files.length; i++) {
+                formData.append('file', files[i]);
+            }
         }
 
         formData.append('choice', reportType === 'fieldwise' ? "2" : "1");

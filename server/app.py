@@ -1,11 +1,10 @@
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import os, pandas as pd
-from feedback_processor import process_feedback, process_for_charts
+from feedback_processor import process_feedback, process_for_charts, summarize_suggestions, generate_implementation_plan_gemini, find_common_themes_gemini
 import matplotlib.pyplot as plt
 import re
-from pymongo import MongoClient
-import gridfs
+from database import client, db, files_collection, charts_collection, fs_files, fs_charts
 from io import BytesIO
 import tempfile
 from flask import url_for  
@@ -14,13 +13,6 @@ import zipfile
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
-# MongoDB setup
-client = MongoClient('mongodb://localhost:27017/')  
-db = client['feedback_db']  
-files_collection = db['files'] 
-charts_collection = db['charts']
-fs_files = gridfs.GridFS(db, collection='files')  
-fs_charts = gridfs.GridFS(db, collection='charts')
 
 def sanitize_filename(name):
     return re.sub(r'[^A-Za-z0-9_]+', '_', name)
@@ -62,22 +54,41 @@ def upload_file():
 @app.route('/headers/<path:filename>', methods=['GET'])
 def get_headers(filename):
     try:
-        # Find file in GridFS
-        file_doc = fs_files.find_one({"filename": filename})
+        # URL decode the filename
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+        
+        print(f"🔍 Looking for file: '{decoded_filename}'")
+        
+        # Find file in GridFS - try exact match first, then search for files ending with the filename
+        file_doc = fs_files.find_one({"filename": decoded_filename})
+        
         if not file_doc:
-            return jsonify({"error": "File not found"}), 404
+            # Search for files that end with the requested filename
+            all_files = list(fs_files.find())
+            matching_files = [f for f in all_files if f.filename.endswith(decoded_filename)]
             
+            if matching_files:
+                file_doc = matching_files[0]
+                print(f"✅ Found file with path: {file_doc.filename}")
+            else:
+                print(f"❌ File not found. Available files: {[f.filename for f in all_files]}")
+                return jsonify({"error": "File not found"}), 404
+        else:
+            print(f"✅ File found: {decoded_filename}")
+        
         # Read file content
         file_content = file_doc.read()
         
         # Create pandas DataFrame
-        if filename.lower().endswith('.csv'):
+        if decoded_filename.lower().endswith('.csv'):
             df = pd.read_csv(BytesIO(file_content))
         else:
             df = pd.read_excel(BytesIO(file_content))
             
         return jsonify({"headers": list(df.columns)})
     except Exception as e:
+        print(f"❌ Error in get_headers: {e}")
         return jsonify({"error": str(e)}), 500
 
 # 3) Generate the report ZIP using the file from MongoDB + choice + feedback type
@@ -302,9 +313,6 @@ def get_chart(filename):
         print(f"Error in get_chart: {str(e)}")  # Add logging
         return jsonify({"error": str(e)}), 500
 
-from feedback_processor import summarize_suggestions, generate_implementation_plan_gemini, find_common_themes_gemini
-from fpdf import FPDF
-from flask import Flask, request, send_file, jsonify
 from fpdf import FPDF
 import pandas as pd
 from io import BytesIO

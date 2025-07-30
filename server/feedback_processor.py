@@ -4,17 +4,13 @@ import matplotlib.pyplot as plt
 from fpdf import FPDF
 import os, zipfile, json, re, textwrap
 from io import BytesIO
-from pymongo import MongoClient
 import gridfs
 import matplotlib
 
 matplotlib.use('Agg')
 
-# MongoDB setup
-client = MongoClient('mongodb://localhost:27017/')  # Update with your MongoDB connection string
-db = client['feedback_db']
-charts_collection = db['charts']
-fs_charts = gridfs.GridFS(db, collection='charts')
+# MongoDB setup - Use the same connection as the rest of the application
+from database import client, db, charts_collection, fs_charts
 
 try:
     # Attempt to configure from environment variable first
@@ -28,76 +24,59 @@ except Exception as e:
     print(f"Could not configure Gemini. AI features will fail. Error: {e}")
     model = None
 
-# gemini
-def detect_likert_categories_with_gemini(df):
-    if not model: return {}
-    sample = df.sample(min(5, len(df))).to_string(index=False)
-    prompt = f"""
-
-You are an expert in analyzing educational feedback forms.
-
-From the sample below, detect which questions are Likert-scale based (i.e., answered on a 1 to 5 scale such as Strongly Disagree to Strongly Agree).
-
-Your task is to assign a concise and meaningful label (1–3 *unique* keywords only) to each Likert-type question.
-
-Instructions:
-- Do not repeat generic terms (like "facilities", "support", "opportunity") unless essential.
-- The labels should be short, intuitive, and unique to the question's core meaning.
-- Avoid redundancy and keep each label 1–3 words max.
-- These labels will be used on charts with limited space.
-
-Return a valid Python dictionary in JSON format like:
-{{ 
-  "Full question column name": "Short label with main keywords",
-  ...
-}}
-
-Here is the sample data:
-{sample}
-"""
-    try:
-        response = model.generate_content(prompt)
-        result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip()).strip()
-        return json.loads(result_text)
-    except Exception as e:
-        print(f"Gemini failed: {e}")
-        print(f"Raw output:\n{response.text}")
-        return {}
+# Removed detect_likert_categories_with_gemini_subject function as we're now using original column names
 
 import string
 
-# Update extract_main_subject to focus on unique keywords
-GENERIC_WORDS = set([
-    'coverage', 'of', 'curriculum', 'for', 'to', 'the', 'and', 'support', 'in', 'on', 'with', 'a', 'an', 'is', 'are', 'by', 'as', 'at', 'from', 'if', 'this', 'that', 'it', 'be', 'provided', 'through', 'expert', 'sessions', 'workshops', 'projects', 'professional', 'society', 'etc', 'face', 'strengthen', 'opportunities', 'provided', 'designed', 'well', 'defined', 'sufficient', 'number', 'hours', 'credit', 'allocated', 'balance', 'between', 'practical', 'applications', 'scheme', 'designed', 'qualification', 'skill', 'development', 'programs', 'applicable', 'facility', 'facilities', 'activities', 'lab', 'administrative', 'academic', 'books', 'reference', 'text', 'library', 'canteen', 'cultural', 'sports', 'co-curricular', 'hostel', 'placements', 'higher', 'studies', 'industry', 'challenges', 'domain', 'soft', 'skills'
-])
+# Removed GENERIC_WORDS set as we're now using original column names
 
-def extract_main_keywords(text, max_keywords=3):
-    if pd.isna(text):
-        return text
-    s = str(text)
-    # Remove punctuation and split
-    words = s.translate(str.maketrans('', '', string.punctuation)).split()
-    # Remove generic/common words
-    keywords = [w for w in words if w.lower() not in GENERIC_WORDS]
-    # If nothing left, fallback to first 1-2 words
-    if not keywords:
-        keywords = [w for w in words if w.lower() not in {'of', 'for', 'the', 'and', 'in', 'on', 'with', 'a', 'an'}]
-    # Return up to max_keywords joined by space
-    return ' '.join(keywords[:max_keywords]) if keywords else s
+# Removed extract_main_keywords function as we're now using original column names
 
 def extract_category_name(text):
     if pd.isna(text): return text
     match = re.search(r'^([^\[]+)', str(text).strip())
     return match.group(1).strip() if match else str(text)
 
+
+
 def group_columns_by_category(df):
     category_groups = {}
     for col in df.columns:
+        # Check if column has brackets for category grouping
         if '[' in str(col) and ']' in str(col):
             category = extract_category_name(col)
             category_groups.setdefault(category, []).append(col)
         else:
-            category_groups[str(col)] = [col]
+            # For columns without brackets, check if they should be grouped by common prefix
+            col_str = str(col)
+            if any(prefix in col_str.lower() for prefix in ['curriculum', 'facilities', 'skill', 'social', 'ict', 'administrative', 'library', 'canteen', 'cultural', 'hostel']):
+                # Extract the main category from the column name
+                if 'curriculum' in col_str.lower():
+                    category = 'Curriculum'
+                elif 'facilities' in col_str.lower():
+                    category = 'Facilities'
+                elif 'skill' in col_str.lower():
+                    category = 'Skill Enhancement'
+                elif 'social' in col_str.lower():
+                    category = 'Social Engagement'
+                elif 'ict' in col_str.lower():
+                    category = 'ICT Support'
+                elif 'administrative' in col_str.lower():
+                    category = 'Administrative'
+                elif 'library' in col_str.lower():
+                    category = 'Library'
+                elif 'canteen' in col_str.lower():
+                    category = 'Canteen'
+                elif 'cultural' in col_str.lower():
+                    category = 'Cultural'
+                elif 'hostel' in col_str.lower():
+                    category = 'Hostel'
+                else:
+                    category = col_str
+                category_groups.setdefault(category, []).append(col)
+            else:
+                # For other columns, treat as individual categories
+                category_groups[str(col)] = [col]
     return category_groups
 
 def summarize_suggestions_with_gemini(df, column_name):
@@ -119,61 +98,6 @@ Feedback suggestions:
         print(f"Gemini summarization failed: {e}")
         return "Summary could not be generated."
 
-def detect_likert_categories_with_gemini_subject(df):
-    import ast
-    if not model: return {}
-    sample = df.sample(min(5, len(df))).to_string(index=False)
-    prompt = f"""
-You are an expert in educational data visualization.
-
-For each question below, generate a label that is:
-- Only 1–2 core keywords (no full sentences, no generic words like 'the', 'curriculum', 'support', 'sufficient', etc.)
-- Unique and meaningful for the question's main idea
-- Suitable for use as a short x-axis label on a bar chart
-
-Examples:
-"Coverage of curriculum for core aspects of your domain" → "Core Domain"
-"Support for ICT facilities" → "ICT"
-"Number of theory hours and Credit allocated to the course are sufficient" → "Theory Hours"
-"Administrative support" → "Administration"
-"Library and availability of books" → "Library"
-"Skill enhancement opportunities through expert sessions" → "Skill Development"
-
-Return a Python dictionary:
-{{ "Full question column name": "Short keyword label", ... }}
-
-Sample:
-{sample}
-"""
-    try:
-        response = model.generate_content(prompt)
-        result_text = re.sub(r"^```(?:json|python)?|```$", "", response.text.strip()).strip()
-        # Extract only the dictionary portion from the output
-        if '{' in result_text and '}' in result_text:
-            start = result_text.find('{')
-            end = result_text.rfind('}') + 1
-            dict_str = result_text[start:end]
-            try:
-                label_mapping = ast.literal_eval(dict_str)
-                # Fallback to summarize_label if label is empty or too long
-                for k, v in label_mapping.items():
-                    if not v or len(str(v).split()) > 3:
-                        label_mapping[k] = summarize_label(k)
-                return label_mapping
-            except Exception as e:
-                print("Failed to parse Gemini dictionary output.")
-                print(f"Raw output:\n{response.text}")
-                return {}
-        else:
-            print("No dictionary found in Gemini output.")
-            print(f"Raw output:\n{response.text}")
-            return {}
-    except Exception as e:
-        print("Gemini failed. Raw output:")
-        print(response.text)
-        print(f"Error: {e}")
-        return {}
-
 def sanitize_text(text):
     if pd.isna(text):
         return ""
@@ -189,16 +113,7 @@ def sanitize_text(text):
 
 import re
 
-def strip_category_prefix(text):
-    # Remove 'Category [' and trailing ']' or similar patterns
-    match = re.match(r"^[^\[]*\[(.*)\]$", str(text).strip())
-    if match:
-        return match.group(1).strip()
-    # Remove leading category name and keep only the question if possible
-    match2 = re.match(r"^[^\[]*\[(.*)", str(text).strip())
-    if match2:
-        return match2.group(1).strip()
-    return str(text).strip()
+# Removed strip_category_prefix function as we're now using original column names
 
 def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='stakeholder'):
     """
@@ -208,18 +123,24 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
     summary = {}
     for col in category_cols:
         if col in sub_df.columns:
-            # Always use short labels for consistency between charts and tables
-            label = short_labels.get(col, col)
             if feedback_type == 'stakeholder':
+                # For stakeholder feedback, extract bracket content for cleaner labels
+                label = extract_bracket_content(col)
                 scores = pd.to_numeric(sub_df[col], errors='coerce').dropna()
-                scores = scores[scores.between(1, 5)].astype(int).value_counts().to_dict()
-                summary[label] = {i: scores.get(i, 0) for i in range(1, 6)}
+                # Filter to only include values between 1-5
+                scores = scores[scores.between(1, 5)]
+                if not scores.empty:
+                    scores = scores.astype(int).value_counts().to_dict()
+                    summary[label] = {i: scores.get(i, 0) for i in range(1, 6)}
             else:
-                cleaned = pd.to_numeric(sub_df[col], errors='coerce').dropna().astype(int)
-                if cleaned.empty:
-                    continue
-                score_counts = cleaned.value_counts().to_dict()
-                summary[label] = {i: score_counts.get(i, 0) for i in range(1, 6)}
+                # For subject feedback, use original column names
+                label = col
+                cleaned = pd.to_numeric(sub_df[col], errors='coerce').dropna()
+                # Filter to only include values between 1-5
+                cleaned = cleaned[cleaned.between(1, 5)]
+                if not cleaned.empty:
+                    score_counts = cleaned.astype(int).value_counts().to_dict()
+                    summary[label] = {i: score_counts.get(i, 0) for i in range(1, 6)}
     
     if not summary:
         return pd.DataFrame()
@@ -242,77 +163,129 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
         score_df = score_df.reset_index().rename(columns={"index": "Category"})
         return score_df[["Category", "Total", 5, "% of 5", 4, "% of 4", 3, "% of 3", 2, "% of 2", 1, "% of 1"]]
 
-def summarize_label(label, max_keywords=2):
-    import string
-    # Only remove extremely generic stop words
-    GENERIC_STOP_WORDS = {
-        'the', 'is', 'are', 'for', 'of', 'to', 'and', 'has', 'with', 'a', 'an', 'on', 'in', 'by', 'at', 'from', 'as',
-        'this', 'that', 'it', 'be', 'etc', 'your', 'yours'
-    }
-    # Clean and split label
-    label_cleaned = label.translate(str.maketrans('', '', string.punctuation.replace('&', ''))).strip()
-    words = label_cleaned.split()
-    # Remove generic stop words, keep domain-specific/meaningful terms
-    keywords = [w.capitalize() for w in words if w.lower() not in GENERIC_STOP_WORDS]
-    # Special handling for common patterns (examples)
-    if 'Skill' in keywords and 'Enhancement' in keywords:
-        return 'Skill Enhancement'
-    if 'Social' in keywords and 'Engagement' in keywords:
-        return 'Social Engagement'
-    if 'Ict' in keywords and 'Support' in keywords:
-        return 'ICT Support'
-    # Remove duplicates, keep order
-    seen = set()
-    filtered = []
-    for w in keywords:
-        if w not in seen:
-            filtered.append(w)
-            seen.add(w)
-    # Only keep 1 or 2 key informative words
-    if len(filtered) > 2:
-        filtered = filtered[:2]
-    if not filtered:
-        return 'General'
-    return ' '.join(filtered)
+# Removed summarize_label function as we're now using original column names
 
 # MODIFIED plot_ratings to use consistent labels
+def wrap_text(text, max_length=30):
+    """Wrap text to multiple lines if it's too long"""
+    if len(text) <= max_length:
+        return text
+    
+    # Try to break at spaces or common separators
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        if len(current_line + " " + word) <= max_length:
+            current_line += (" " + word) if current_line else word
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    
+    if current_line:
+        lines.append(current_line)
+    
+    return "\n".join(lines)
+
+def extract_bracket_content(text):
+    """Extract content inside brackets for cleaner display"""
+    if not text:
+        return text
+    
+    text_str = str(text)
+    
+    # First, try to extract content from square brackets
+    if '[' in text_str and ']' in text_str:
+        start_idx = text_str.find('[')
+        end_idx = text_str.find(']')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            bracket_content = text_str[start_idx + 1:end_idx].strip()
+            
+            # Remove common prefixes like "Curriculum" from the bracket content
+            prefixes_to_remove = ['Curriculum', 'Facilities', 'Infrastructure', 'Faculty', 'Administration']
+            for prefix in prefixes_to_remove:
+                if bracket_content.startswith(prefix + ' '):
+                    bracket_content = bracket_content[len(prefix + ' '):].strip()
+            
+            return bracket_content
+    
+    # If no brackets found, try to remove common prefixes from the original text
+    prefixes_to_remove = ['Curriculum', 'Facilities', 'Infrastructure', 'Faculty', 'Administration']
+    for prefix in prefixes_to_remove:
+        if text_str.startswith(prefix + ' '):
+            return text_str[len(prefix + ' '):].strip()
+    
+    # If no patterns match, return the original text
+    return text_str
+
+def wrap_chart_labels(text, words_per_line=4):
+    """Wrap chart labels with line breaks after every ~4 words, limiting to 2-3 lines"""
+    if not text or len(text) <= 40:
+        return text
+    
+    words = text.split()
+    if len(words) <= words_per_line:
+        return text
+    
+    lines = []
+    for i in range(0, len(words), words_per_line):
+        line_words = words[i:i + words_per_line]
+        lines.append(" ".join(line_words))
+    
+    # Limit to maximum 3 lines to prevent excessive height
+    if len(lines) > 3:
+        lines = lines[:3]
+        # Add ellipsis to indicate truncation
+        if len(lines[-1]) > 50:
+            lines[-1] = lines[-1][:47] + "..."
+    
+    return "\n".join(lines)
+
 def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'):
     if score_df.empty:
         return None
 
     plot_cols = [col for col in [5, 4, 3, 2, 1] if col in score_df.columns]
 
-    # Use the Category column as-is (which now contains short labels)
+    # Use the Category column as-is (which now contains original column names)
     df_plot = score_df.set_index('Category')[plot_cols]
 
     # Chart title
     chart_title = f"{report_type} - {report_name}"
 
     if feedback_type == 'stakeholder':
-        ax = df_plot.plot(kind='bar', figsize=(36, 14), colormap='viridis', width=0.4)
+        ax = df_plot.plot(kind='bar', figsize=(40, 18), colormap='viridis', width=0.4)
         for bars in ax.containers:
             ax.bar_label(bars, label_type='edge', fontsize=28, padding=3)
         plt.title(chart_title, fontsize=28, weight='bold')
         plt.xlabel(report_type, fontsize=28)
         plt.ylabel("Number of Responses", fontsize=28)
-        plt.xticks(rotation=45, ha='right', fontsize=32)  # angled labels
+        
+        # Wrap long category labels for cleaner display with ~4 words per line
+        wrapped_labels = [wrap_chart_labels(label, words_per_line=4) for label in df_plot.index]
+        plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=14)
         plt.yticks(fontsize=32)
         plt.legend(title='Rating', fontsize=24, title_fontsize=26)
         plt.grid(axis='y', linestyle='--', alpha=0.7)
         plt.tight_layout(pad=3.0)
-        plt.subplots_adjust(bottom=0.35)
+        plt.subplots_adjust(bottom=0.75)  # Increased bottom margin for better multiline label display
     else:
-        ax = df_plot.plot(kind='bar', figsize=(36, 14), width=0.4)
+        ax = df_plot.plot(kind='bar', figsize=(40, 18), width=0.4)
         for bars in ax.containers:
             ax.bar_label(bars, label_type='edge', fontsize=28)
         plt.title(chart_title, fontsize=28, weight='bold')
         plt.xlabel(report_type, fontsize=28)
         plt.ylabel("No. of Responses", fontsize=28)
-        plt.xticks(rotation=45, ha='right', fontsize=32)  # angled labels
+        
+        # For subject feedback, use original labels with wrapping
+        wrapped_labels = [wrap_chart_labels(label, words_per_line=3) for label in df_plot.index]
+        plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=16)
         plt.yticks(fontsize=32)
         plt.legend(fontsize=24)
         plt.tight_layout()
-        plt.subplots_adjust(bottom=0.35)
+        plt.subplots_adjust(bottom=0.7)  # Significantly increased bottom margin for multi-line labels
 
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', report_type)
     safe_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', report_name)
@@ -357,7 +330,7 @@ class StakeholderPDF(FPDF):
             self.cell(0, 10, "No data available for this section.", ln=1)
             return
         self.set_font('Arial', '', 9)
-        first_col_width = 55
+        first_col_width = 120  # Increased width for longer column names
         num_other_cols = len(df.columns) - 1
         other_col_width = (self.w - 20 - first_col_width) / num_other_cols if num_other_cols > 0 else 0
         row_height = 8
@@ -371,9 +344,13 @@ class StakeholderPDF(FPDF):
         self.set_font('Arial', '', 8)
         for _, row in df.iterrows():
             y_before = self.get_y()
-            # Use the category name as-is (now contains short labels)
+            # Use the category name as-is (now contains original column names)
             category_text = str(row.iloc[0])
-            self.multi_cell(first_col_width, row_height, sanitize_text(category_text), border=1)
+            # For stakeholder feedback, extract bracket content for cleaner display
+            cleaned_text = extract_bracket_content(category_text)
+            # Wrap long category names with better formatting for readability
+            wrapped_text = wrap_chart_labels(cleaned_text, words_per_line=6)
+            self.multi_cell(first_col_width, row_height, sanitize_text(wrapped_text), border=1)
             y_after = self.get_y()
             x_after = self.get_x()
             self.set_xy(x_after + first_col_width, y_before)
@@ -418,7 +395,7 @@ class SubjectPDF(FPDF):
             self.cell(0, 10, "No data available for this section.", ln=1)
             return
         self.set_font('Arial', '', 9)
-        first_col_width = 55
+        first_col_width = 120  # Increased width for longer column names
         num_other_cols = len(df.columns) - 1
         other_col_width = (self.w - 20 - first_col_width) / num_other_cols if num_other_cols > 0 else 0
         row_height = 8
@@ -431,9 +408,11 @@ class SubjectPDF(FPDF):
         for _, row in df.iterrows():
             x_start = self.get_x()
             y_start = self.get_y()
-            # Use the category name as-is (now contains short labels)
+            # Use the category name as-is (now contains original column names)
             category_text = str(row.iloc[0])
-            lines = self.multi_cell(first_col_width, row_height, sanitize_text(category_text), split_only=True, border=1, align='L')
+            # For subject feedback, use original labels with wrapping
+            wrapped_text = wrap_chart_labels(category_text, words_per_line=6)
+            lines = self.multi_cell(first_col_width, row_height, sanitize_text(wrapped_text), split_only=True, border=1, align='L')
             height_needed = row_height * len(lines)
             if y_start + height_needed > self.h - self.b_margin:
                 self.add_page()
@@ -446,7 +425,7 @@ class SubjectPDF(FPDF):
                 x_start = self.get_x()
                 y_start = self.get_y()
             self.set_xy(x_start, y_start)
-            self.multi_cell(first_col_width, row_height, sanitize_text(category_text), border=1, align='L')
+            self.multi_cell(first_col_width, row_height, sanitize_text(wrapped_text), border=1, align='L')
             self.set_xy(x_start + first_col_width, y_start)
             for item in row.iloc[1:]:
                 self.cell(other_col_width, height_needed, str(item), border=1, align='C')
@@ -488,7 +467,7 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
         valid_cols = [col for col in cols if col in sub_df.columns]
         if not valid_cols: continue
 
-        # Generate summary using short labels - same for both table and chart
+        # Generate summary using original column names - same for both table and chart
         summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'stakeholder')
         if not summary_df.empty:
             pdf.section_title(f"{category} Feedback Summary")
@@ -496,13 +475,18 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
             pdf.ln(10)
 
             # Chart uses the SAME summary_df, ensuring consistency
-            if value:
-                unique_report_name = f"{report_name}__{name}__{value}__{category}"
-            else:
-                unique_report_name = f"{report_name}__{category}"
-            chart_file = plot_ratings(summary_df, report_type, unique_report_name, 'stakeholder')
+            # Use the same logic as view charts: compose title and use category as report_type
+            title_parts = [uploaded_filename or name]
+            if report_type:
+                title_parts.append(report_type.capitalize())
+            if str(value) and str(value).lower() not in ['all_students', 'all students']:
+                title_parts.append(str(value))
+            title = " | ".join(title_parts)
+            chart_file = plot_ratings(summary_df, category, title, 'stakeholder')
             if chart_file:
                 chart_files.append(chart_file)
+        else:
+            print(f"Empty summary table for category: {category}")
 
     for chart in chart_files:
         pdf.insert_image_from_mongodb(chart)
@@ -538,15 +522,18 @@ def generate_subject_report(sub_df, name, value, category_groups, short_labels, 
         if not valid_cols:
             continue
 
-        # Generate summary using short labels - same for both table and chart
+        # Generate summary using original column names - same for both table and chart
         summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'subject')
         if not summary_df.empty:
             # Chart uses the SAME summary_df, ensuring consistency
-            if value:
-                unique_report_name = f"{report_name}__{value}__{category}"
-            else:
-                unique_report_name = f"{report_name}__{category}"
-            chart_path = plot_ratings(summary_df, report_type_str, unique_report_name, 'subject')
+            # Use the same logic as view charts: compose title and use category as report_type
+            title_parts = [uploaded_filename or name]
+            if report_type:
+                title_parts.append(report_type.capitalize())
+            if str(value) and str(value).lower() not in ['all_students', 'all students']:
+                title_parts.append(str(value))
+            title = " | ".join(title_parts)
+            chart_path = plot_ratings(summary_df, category, title, 'subject')
             summary_tables.append((category, summary_df))
             if chart_path:
                 chart_paths.append((category, chart_path))
@@ -568,10 +555,14 @@ def generate_subject_report(sub_df, name, value, category_groups, short_labels, 
 
 def _get_data_and_groups(file_path, feedback_type='stakeholder'):
     """Helper to read data and identify column groups."""
-    try:
-        df = pd.read_excel(file_path)
-    except Exception:
-        df = pd.read_csv(file_path)
+    # Handle both file paths and DataFrame objects
+    if isinstance(file_path, pd.DataFrame):
+        df = file_path
+    else:
+        try:
+            df = pd.read_excel(file_path)
+        except Exception:
+            df = pd.read_csv(file_path)
 
     os.makedirs("feedback_catalyst", exist_ok=True)
     
@@ -584,21 +575,27 @@ def _get_data_and_groups(file_path, feedback_type='stakeholder'):
             for col in cols:
                 if col in df.columns:
                     numeric_vals = pd.to_numeric(df[col], errors='coerce').dropna()
-                    if not numeric_vals.empty and numeric_vals.between(1, 5, inclusive='both').all():
-                        likert_cols.append(col)
-                        short_labels[col] = summarize_label(col)
+                    # Include columns that have mostly values between 1-5 (at least 80% of values)
+                    if not numeric_vals.empty:
+                        valid_vals = numeric_vals[numeric_vals.between(1, 5, inclusive='both')]
+                        if len(valid_vals) >= 0.8 * len(numeric_vals):  # At least 80% of values are 1-5
+                            likert_cols.append(col)
+                            short_labels[col] = col  # Use original column name
             if likert_cols:
                 category_groups[category] = likert_cols
     else:  # subject feedback
-        label_mapping = detect_likert_categories_with_gemini_subject(df)
+        # For subject feedback, use original column names instead of AI-generated labels
         category_groups = {}
         short_labels = {}
-        for long_col, short_label in label_mapping.items():
-            if long_col in df.columns:
-                numeric_vals = pd.to_numeric(df[long_col], errors='coerce').dropna()
-                if not numeric_vals.empty and numeric_vals.between(1, 5).all():
-                    category_groups.setdefault(short_label.strip(), []).append(long_col)
-                    short_labels[long_col] = short_label.strip()
+        for col in df.columns:
+            if col in df.columns:
+                numeric_vals = pd.to_numeric(df[col], errors='coerce').dropna()
+                if not numeric_vals.empty:
+                    valid_vals = numeric_vals[numeric_vals.between(1, 5)]
+                    if len(valid_vals) >= 0.8 * len(numeric_vals):  # At least 80% of values are 1-5
+                        # Use original column name as category
+                        category_groups.setdefault(col, []).append(col)
+                        short_labels[col] = col  # Use original column name
 
     return df, category_groups, short_labels
 
@@ -680,7 +677,7 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
             valid_cols = [col for col in cols if col in sub_df.columns]
             if not valid_cols:
                 continue
-            # Use same summary generation approach for consistency
+            # Use same summary generation approach for consistency with original column names
             chart_df = generate_summary_table(sub_df, valid_cols, short_labels, feedback_type)
             if not chart_df.empty:
                 chart_file = plot_ratings(chart_df, category, title, feedback_type)
@@ -766,3 +763,4 @@ Requirements:
     except Exception as e:
         print(f"Gemini failed while generating implementation plan: {e}")
         return "Could not generate implementation plan due to an error."
+        
