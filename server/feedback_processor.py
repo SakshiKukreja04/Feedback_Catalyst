@@ -244,6 +244,7 @@ def wrap_chart_labels(text, words_per_line=4):
     return "\n".join(lines)
 
 def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'):
+    print(f"Plotting ratings for {report_type} - {report_name} with feedback type: {feedback_type}")
     if score_df.empty:
         return None
 
@@ -256,15 +257,13 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
     chart_title = f"{report_type} - {report_name}"
 
     if feedback_type == 'stakeholder':
-        ax = df_plot.plot(kind='bar', figsize=(40, 18), colormap='viridis', width=0.4)
-        for bars in ax.containers:
-            ax.bar_label(bars, label_type='edge', fontsize=28, padding=3)
-        plt.title(chart_title, fontsize=28, weight='bold')
-        plt.xlabel(report_type, fontsize=28)
-        plt.ylabel("Number of Responses", fontsize=28)
-        
+        ax = df_plot.plot(kind='barh', figsize=(30, 60), colormap='viridis')
+        plt.ylabel(report_type, fontsize=28)
+        plt.xlabel("Number of Responses", fontsize=28)
+        plt.yticks(fontsize=18)
+
         # Wrap long category labels for cleaner display with ~4 words per line
-        wrapped_labels = [wrap_chart_labels(label, words_per_line=4) for label in df_plot.index]
+        wrapped_labels = [wrap_chart_labels(label, words_per_line=3) for label in df_plot.index]
         plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=14)
         plt.yticks(fontsize=32)
         plt.legend(title='Rating', fontsize=24, title_fontsize=26)
@@ -273,8 +272,8 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
         plt.subplots_adjust(bottom=0.75)  # Increased bottom margin for better multiline label display
     else:
         ax = df_plot.plot(kind='bar', figsize=(40, 18), width=0.4)
-        for bars in ax.containers:
-            ax.bar_label(bars, label_type='edge', fontsize=28)
+        # for bars in ax.containers:
+        #     ax.bar_label(bars, label_type='edge', fontsize=28)
         plt.title(chart_title, fontsize=28, weight='bold')
         plt.xlabel(report_type, fontsize=28)
         plt.ylabel("No. of Responses", fontsize=28)
@@ -330,7 +329,7 @@ class StakeholderPDF(FPDF):
             self.cell(0, 10, "No data available for this section.", ln=1)
             return
         self.set_font('Arial', '', 9)
-        first_col_width = 120  # Increased width for longer column names
+        first_col_width = 79  # Increased width for longer column names
         num_other_cols = len(df.columns) - 1
         other_col_width = (self.w - 20 - first_col_width) / num_other_cols if num_other_cols > 0 else 0
         row_height = 8
@@ -395,7 +394,7 @@ class SubjectPDF(FPDF):
             self.cell(0, 10, "No data available for this section.", ln=1)
             return
         self.set_font('Arial', '', 9)
-        first_col_width = 120  # Increased width for longer column names
+        first_col_width = 79  # Increased width for longer column names
         num_other_cols = len(df.columns) - 1
         other_col_width = (self.w - 20 - first_col_width) / num_other_cols if num_other_cols > 0 else 0
         row_height = 8

@@ -170,6 +170,8 @@ def generate_report():
 
 @app.route('/api/generate-stakeholder-report', methods=['POST'])
 def generate_stakeholder_report():
+    files = request.files.getlist('file')  # Accept multiple files
+    print(f"Received files for report generation", files)  # Add logging
     choice = request.form.get('choice')
     report_type = request.form.get('reportType', None)
     uploaded_filenames = request.form.get('uploadedFilenames', None)
@@ -374,14 +376,14 @@ def get_suggestions():
                 pdf.multi_cell(0, 8, line)
             pdf.ln(5)
 
-        # Stakeholder common themes
-        if common_themes:
-            pdf.set_font("Arial", style='B', size=12)
-            pdf.cell(0, 10, "Common Themes Across All Files:", ln=True)
-            pdf.set_font("Arial", size=11)
-            for line in common_themes.split('\n'):
-                pdf.multi_cell(0, 8, line)
-            pdf.ln(5)
+        # # Stakeholder common themes
+        # if common_themes:
+        #     pdf.set_font("Arial", style='B', size=12)
+        #     pdf.cell(0, 10, "Common Themes Across All Files:", ln=True)
+        #     pdf.set_font("Arial", size=11)
+        #     for line in common_themes.split('\n'):
+        #         pdf.multi_cell(0, 8, line)
+        #     pdf.ln(5)
 
         # Implementation plan (always included if generated)
         if implementation_plan:
