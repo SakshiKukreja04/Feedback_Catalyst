@@ -1,11 +1,13 @@
 import pandas as pd
-import google.generativeai as genai
 import matplotlib.pyplot as plt
 from fpdf import FPDF
 import os, zipfile, json, re, textwrap
 from io import BytesIO
 import gridfs
 import matplotlib
+# Fixed import for mistralai==0.4.2
+from mistralai.client import MistralClient
+from mistralai.models.chat_completion import ChatMessage
 
 matplotlib.use('Agg')
 
@@ -13,31 +15,23 @@ matplotlib.use('Agg')
 from database import client, db, charts_collection, fs_charts
 
 try:
-    # Attempt to configure from environment variable first
-    if 'GEMINI_API_KEY' in os.environ:
-        genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+    # Mistral configuration - Use environment variable for security
+    if 'MISTRAL_API_KEY' in os.environ:
+        mistral_client = MistralClient(api_key=os.environ['MISTRAL_API_KEY'])
     else:
-        # Fallback for local testing - replace with your key
-        genai.configure(api_key="AIzaSyCaCHAUd-8dkb4OtkH-tqOklwADUr7pbIY")
-    model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        # For local testing - replace with your actual key
+        mistral_client = MistralClient(api_key="CW63BrgyNCCCx97dppayK9Z5GGFtF0gE")
+    print("Mistral AI configured successfully")
 except Exception as e:
-    print(f"Could not configure Gemini. AI features will fail. Error: {e}")
-    model = None
-
-# Removed detect_likert_categories_with_gemini_subject function as we're now using original column names
+    print(f"Could not configure Mistral. AI features will fail. Error: {e}")
+    mistral_client = None
 
 import string
-
-# Removed GENERIC_WORDS set as we're now using original column names
-
-# Removed extract_main_keywords function as we're now using original column names
 
 def extract_category_name(text):
     if pd.isna(text): return text
     match = re.search(r'^([^\[]+)', str(text).strip())
     return match.group(1).strip() if match else str(text)
-
-
 
 def group_columns_by_category(df):
     category_groups = {}
@@ -79,23 +73,33 @@ def group_columns_by_category(df):
                 category_groups[str(col)] = [col]
     return category_groups
 
-def summarize_suggestions_with_gemini(df, column_name):
-    if not model: return "Summary could not be generated (AI model not configured)."
+def summarize_suggestions_with_mistral(df, column_name):
+    if not mistral_client: 
+        return "Summary could not be generated (Mistral AI not configured)."
+    
     suggestions = df[column_name].dropna().astype(str)
     if suggestions.empty:
         return "No suggestions provided."
+    
     combined_text = "\n".join(suggestions.tolist()[:50])
     prompt = f"""
-You are a helpful assistant.
+You are a helpful assistant analyzing student feedback.
 Given the following feedback suggestions from a student feedback form, write a grammatically correct, concise, and insightful summary.
+
 Feedback suggestions:
 {combined_text}
 """
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        messages = [ChatMessage(role="user", content=prompt)]
+        response = mistral_client.chat(
+            model="mistral-large-latest",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Gemini summarization failed: {e}")
+        print(f"Mistral summarization failed: {e}")
         return "Summary could not be generated."
 
 def sanitize_text(text):
@@ -112,8 +116,6 @@ def sanitize_text(text):
     return clean_text.encode('latin-1', 'replace').decode('latin-1')
 
 import re
-
-# Removed strip_category_prefix function as we're now using original column names
 
 def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='stakeholder'):
     """
@@ -163,9 +165,6 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
         score_df = score_df.reset_index().rename(columns={"index": "Category"})
         return score_df[["Category", "Total", 5, "% of 5", 4, "% of 4", 3, "% of 3", 2, "% of 2", 1, "% of 1"]]
 
-# Removed summarize_label function as we're now using original column names
-
-# MODIFIED plot_ratings to use consistent labels
 def wrap_text(text, max_length=30):
     """Wrap text to multiple lines if it's too long"""
     if len(text) <= max_length:
@@ -257,41 +256,57 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
     chart_title = f"{report_type} - {report_name}"
 
     if feedback_type == 'stakeholder':
-        ax = df_plot.plot(kind='barh', figsize=(30, 60), colormap='viridis')
-        plt.ylabel(report_type, fontsize=28)
-        plt.xlabel("Number of Responses", fontsize=28)
-        plt.yticks(fontsize=18)
-
-        # Wrap long category labels for cleaner display with ~4 words per line
-        wrapped_labels = [wrap_chart_labels(label, words_per_line=3) for label in df_plot.index]
-        plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=14)
-        plt.yticks(fontsize=32)
-        plt.legend(title='Rating', fontsize=24, title_fontsize=26)
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.tight_layout(pad=3.0)
-        plt.subplots_adjust(bottom=0.75)  # Increased bottom margin for better multiline label display
+        # Create horizontal bar chart
+        fig, ax = plt.subplots(figsize=(20, max(8, len(df_plot) * 0.8)))
+        
+        # Create the horizontal bar chart
+        df_plot.plot(kind='barh', ax=ax, colormap='viridis', width=0.8)
+        
+        # Set title and labels
+        ax.set_title(chart_title, fontsize=20, weight='bold', pad=20)
+        ax.set_xlabel("Number of Responses", fontsize=16)
+        ax.set_ylabel(report_type, fontsize=16)
+        
+        # Set y-axis labels (categories) with proper wrapping - no rotation needed for horizontal
+        wrapped_labels = [wrap_chart_labels(label, words_per_line=4) for label in df_plot.index]
+        ax.set_yticklabels(wrapped_labels, fontsize=12)
+        
+        # Set x-axis ticks - no rotation needed
+        ax.tick_params(axis='x', labelsize=12)
+        
+        # Position legend
+        ax.legend(title='Rating', fontsize=12, title_fontsize=14, loc='lower right')
+        
+        # Add grid
+        ax.grid(axis='x', linestyle='--', alpha=0.7)
+        
+        # Adjust layout
+        plt.tight_layout()
+        
     else:
-        ax = df_plot.plot(kind='bar', figsize=(40, 18), width=0.4)
-        # for bars in ax.containers:
-        #     ax.bar_label(bars, label_type='edge', fontsize=28)
-        plt.title(chart_title, fontsize=28, weight='bold')
-        plt.xlabel(report_type, fontsize=28)
-        plt.ylabel("No. of Responses", fontsize=28)
+        # Create vertical bar chart for subject feedback
+        fig, ax = plt.subplots(figsize=(max(12, len(df_plot) * 1.2), 10))
+        
+        df_plot.plot(kind='bar', ax=ax, width=0.6)
+        
+        ax.set_title(chart_title, fontsize=18, weight='bold')
+        ax.set_xlabel(report_type, fontsize=16)
+        ax.set_ylabel("Number of Responses", fontsize=16)
         
         # For subject feedback, use original labels with wrapping
         wrapped_labels = [wrap_chart_labels(label, words_per_line=3) for label in df_plot.index]
-        plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=16)
-        plt.yticks(fontsize=32)
-        plt.legend(fontsize=24)
+        ax.set_xticklabels(wrapped_labels, rotation=45, ha='right', fontsize=12)
+        ax.tick_params(axis='y', labelsize=12)
+        
+        ax.legend(fontsize=12)
         plt.tight_layout()
-        plt.subplots_adjust(bottom=0.7)  # Significantly increased bottom margin for multi-line labels
 
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', report_type)
     safe_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', report_name)
     safe_filename = f"{safe_prefix}_{safe_name}.png"
 
     buffer = BytesIO()
-    plt.savefig(buffer, format='png')
+    plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
     buffer.seek(0)
 
     chart_id = fs_charts.put(
@@ -492,7 +507,7 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
 
     suggestion_col = next((col for col in sub_df.columns if 'suggestion' in col.lower()), None)
     if suggestion_col:
-        suggestion_summary = summarize_suggestions_with_gemini(sub_df, suggestion_col)
+        suggestion_summary = summarize_suggestions_with_mistral(sub_df, suggestion_col)
         pdf.add_summary(suggestion_summary)
 
     output_dir = "feedback_catalyst"
@@ -598,6 +613,7 @@ def _get_data_and_groups(file_path, feedback_type='stakeholder'):
 
     return df, category_groups, short_labels
 
+import os
 import pandas as pd
 import zipfile
 from io import BytesIO
@@ -694,7 +710,7 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
     return chart_files   
 
 def summarize_suggestions(df, column_name):
-    if not model:
+    if not mistral_client:
         # Fallback: join all suggestions and return first 10 lines
         suggestions = df[column_name].dropna().astype(str)
         return "\n".join(suggestions.tolist()[:10])
@@ -709,16 +725,22 @@ Feedback suggestions:
 {combined_text}
 """
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        messages = [ChatMessage(role="user", content=prompt)]
+        response = mistral_client.chat(
+            model="mistral-large-latest",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Gemini failed: {e}")
+        print(f"Mistral failed: {e}")
         return "Could not summarize suggestions due to an error."
 
-# Function to find common parts/themes using Gemini
-def find_common_themes_gemini(summaries):
-    if not model:
-        return "Gemini model not available to extract common themes."
+# Function to find common parts/themes using Mistral
+def find_common_themes_mistral(summaries):
+    if not mistral_client:
+        return "Mistral model not available to extract common themes."
 
     combined = "\n\n".join(summaries)
     prompt = f"""
@@ -732,15 +754,21 @@ Feedback Summaries:
 """
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        messages = [ChatMessage(role="user", content=prompt)]
+        response = mistral_client.chat(
+            model="mistral-large-latest",
+            messages=messages,
+            max_tokens=400,
+            temperature=0.2
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Gemini failed while extracting themes: {e}")
+        print(f"Mistral failed while extracting themes: {e}")
         return "Could not extract common themes due to an error."
 
-# Function to generate implementation suggestions using Gemini
-def generate_implementation_plan_gemini(themes):
-    if not model:
+# Function to generate implementation suggestions using Mistral
+def generate_implementation_plan_mistral(themes):
+    if not mistral_client:
         return f"Model unavailable. Use these themes for implementation: {themes}"
 
     prompt = f"""
@@ -757,9 +785,14 @@ Requirements:
 """
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        messages = [ChatMessage(role="user", content=prompt)]
+        response = mistral_client.chat(
+            model="mistral-large-latest",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Gemini failed while generating implementation plan: {e}")
+        print(f"Mistral failed while generating implementation plan: {e}")
         return "Could not generate implementation plan due to an error."
-        

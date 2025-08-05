@@ -1,7 +1,8 @@
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import os, pandas as pd
-from feedback_processor import process_feedback, process_for_charts, summarize_suggestions, generate_implementation_plan_gemini, find_common_themes_gemini
+# Updated imports to match the actual function names in feedback_processor.py
+from feedback_processor import process_feedback, process_for_charts, summarize_suggestions, generate_implementation_plan_mistral, find_common_themes_mistral
 import matplotlib.pyplot as plt
 import re
 from database import client, db, files_collection, charts_collection, fs_files, fs_charts
@@ -338,10 +339,10 @@ def get_suggestions():
                     summary = summarize_suggestions(df, suggestion_col)
                     suggestions.append((filenames[idx], summary))
 
-            # Get common themes and implementation plan using Gemini
+            # Get common themes and implementation plan using Mistral (updated function names)
             all_summary_texts = [summary for _, summary in suggestions]
-            common_themes = find_common_themes_gemini(all_summary_texts)
-            implementation_plan = generate_implementation_plan_gemini(common_themes)
+            common_themes = find_common_themes_mistral(all_summary_texts)
+            implementation_plan = generate_implementation_plan_mistral(common_themes)
 
         else:
             # Single file upload (non-stakeholder or fallback)
@@ -353,8 +354,8 @@ def get_suggestions():
                 summary = summarize_suggestions(df, suggestion_col)
                 suggestions.append((filename, summary))
 
-                # Generate implementation plan even for single summary
-                implementation_plan = generate_implementation_plan_gemini(summary)
+                # Generate implementation plan even for single summary (updated function name)
+                implementation_plan = generate_implementation_plan_mistral(summary)
             else:
                 implementation_plan = None
 
