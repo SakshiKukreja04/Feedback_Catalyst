@@ -1,37 +1,62 @@
 import pandas as pd
+import google.generativeai as genai
 import matplotlib.pyplot as plt
 from fpdf import FPDF
 import os, zipfile, json, re, textwrap
 from io import BytesIO
 import gridfs
 import matplotlib
-# Fixed import for mistralai==0.4.2
-from mistralai.client import MistralClient
-from mistralai.models.chat_completion import ChatMessage
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 matplotlib.use('Agg')
 
 # MongoDB setup - Use the same connection as the rest of the application
 from database import client, db, charts_collection, fs_charts
 
+# Debug: Check if environment variables are loaded
+print(f"GEMINI_API_KEY exists: {'GEMINI_API_KEY' in os.environ}")
+if 'GEMINI_API_KEY' in os.environ:
+    print(f"GEMINI_API_KEY length: {len(os.environ['GEMINI_API_KEY'])}")
+    print(f"GEMINI_API_KEY starts with: {os.environ['GEMINI_API_KEY'][:10]}...")
+
 try:
-    # Mistral configuration - Use environment variable for security
-    if 'MISTRAL_API_KEY' in os.environ:
-        mistral_client = MistralClient(api_key=os.environ['MISTRAL_API_KEY'])
+    # Configure Gemini API from environment variable
+    if 'GEMINI_API_KEY' in os.environ:
+        print("Configuring Gemini API...")
+        genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        print("Gemini model configured successfully!")
     else:
-        # For local testing - replace with your actual key
-        mistral_client = MistralClient(api_key="CW63BrgyNCCCx97dppayK9Z5GGFtF0gE")
-    print("Mistral AI configured successfully")
+        print("Warning: GEMINI_API_KEY environment variable not set. Trying hardcoded key...")
+        # Temporary fallback for testing
+        try:
+            genai.configure(api_key="AIzaSyDCnkktRcbcJz-L2m0xcHycl6zVj4Thj84")
+            model = genai.GenerativeModel("gemini-1.5-flash-latest")
+            print("Gemini model configured with hardcoded key!")
+        except Exception as fallback_error:
+            print(f"Hardcoded key also failed: {fallback_error}")
+            model = None
 except Exception as e:
-    print(f"Could not configure Mistral. AI features will fail. Error: {e}")
-    mistral_client = None
+    print(f"Could not configure Gemini. AI features will fail. Error: {e}")
+    model = None
+
+# Removed detect_likert_categories_with_gemini_subject function as we're now using original column names
 
 import string
+
+# Removed GENERIC_WORDS set as we're now using original column names
+
+# Removed extract_main_keywords function as we're now using original column names
 
 def extract_category_name(text):
     if pd.isna(text): return text
     match = re.search(r'^([^\[]+)', str(text).strip())
     return match.group(1).strip() if match else str(text)
+
+
 
 def group_columns_by_category(df):
     category_groups = {}
@@ -73,49 +98,84 @@ def group_columns_by_category(df):
                 category_groups[str(col)] = [col]
     return category_groups
 
-def summarize_suggestions_with_mistral(df, column_name):
-    if not mistral_client: 
-        return "Summary could not be generated (Mistral AI not configured)."
+def summarize_suggestions_with_gemini(df, column_name):
+    print(f"Starting summarization for column: {column_name}")
+    print(f"Model is None: {model is None}")
+    
+    if not model: 
+        print("Model is not configured, returning fallback message")
+        return "Summary could not be generated (AI model not configured)."
     
     suggestions = df[column_name].dropna().astype(str)
+    print(f"Found {len(suggestions)} suggestions to summarize")
+    
     if suggestions.empty:
+        print("No suggestions found")
         return "No suggestions provided."
     
     combined_text = "\n".join(suggestions.tolist()[:50])
+    print(f"Combined text length: {len(combined_text)} characters")
+    
     prompt = f"""
-You are a helpful assistant analyzing student feedback.
-Given the following feedback suggestions from a student feedback form, write a grammatically correct, concise, and insightful summary.
+You are an expert feedback analyst. Your task is to analyze the following student feedback suggestions and provide a comprehensive, well-structured summary.
 
-Feedback suggestions:
+Please:
+1. Identify the main themes and categories of feedback
+2. Highlight positive feedback and areas of satisfaction
+3. Identify areas for improvement and specific recommendations
+4. Provide actionable insights for institutional development
+5. Keep the summary professional, concise, and insightful
+
+Student Feedback Suggestions:
 {combined_text}
+
+Please provide a structured summary with clear sections for themes, positive feedback, areas for improvement, and recommendations.
 """
     try:
-        messages = [ChatMessage(role="user", content=prompt)]
-        response = mistral_client.chat(
-            model="mistral-large-latest",
-            messages=messages,
-            max_tokens=300,
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
+        print("Calling Gemini API...")
+        response = model.generate_content(prompt)
+        summary = response.text.strip()
+        print(f"Generated summary length: {len(summary)} characters")
+        return summary
     except Exception as e:
-        print(f"Mistral summarization failed: {e}")
+        print(f"Gemini summarization failed: {e}")
         return "Summary could not be generated."
 
 def sanitize_text(text):
     if pd.isna(text):
         return ""
 
+    # More comprehensive Unicode character replacements
     replacements = {
         ''': "'", ''': "'", '"': '"', '"': '"', '–': '-', '—': '-',
-        '\u00a0': ' ', '•': '-', '→': '->'
+        '\u00a0': ' ', '•': '-', '→': '->', '…': '...', 
+        '\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'",
+        '\u201c': '"', '\u201d': '"', '\u2022': '-', '\u2026': '...',
+        '\u00b0': ' degrees', '\u00b1': '+/-', '\u00b2': '2', '\u00b3': '3',
+        '\u00b9': '1'
     }
+    
     clean_text = str(text)
+    
+    # Apply replacements
     for orig, repl in replacements.items():
         clean_text = clean_text.replace(orig, repl)
-    return clean_text.encode('latin-1', 'replace').decode('latin-1')
+    
+    # Remove any remaining non-ASCII characters that might cause issues
+    # This is more aggressive but ensures FPDF compatibility
+    try:
+        # First try to encode as latin-1 with replacement
+        return clean_text.encode('latin-1', 'replace').decode('latin-1')
+    except UnicodeEncodeError:
+        # If that fails, manually replace problematic characters
+        import re
+        # Remove or replace any remaining Unicode characters
+        clean_text = re.sub(r'[^\x00-\x7F]+', ' ', clean_text)
+        return clean_text
 
 import re
+
+# Removed strip_category_prefix function as we're now using original column names
 
 def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='stakeholder'):
     """
@@ -165,6 +225,9 @@ def generate_summary_table(sub_df, category_cols, short_labels, feedback_type='s
         score_df = score_df.reset_index().rename(columns={"index": "Category"})
         return score_df[["Category", "Total", 5, "% of 5", 4, "% of 4", 3, "% of 3", 2, "% of 2", 1, "% of 1"]]
 
+# Removed summarize_label function as we're now using original column names
+
+# MODIFIED plot_ratings to use consistent labels
 def wrap_text(text, max_length=30):
     """Wrap text to multiple lines if it's too long"""
     if len(text) <= max_length:
@@ -256,57 +319,48 @@ def plot_ratings(score_df, report_type, report_name, feedback_type='stakeholder'
     chart_title = f"{report_type} - {report_name}"
 
     if feedback_type == 'stakeholder':
-        # Create horizontal bar chart
-        fig, ax = plt.subplots(figsize=(20, max(8, len(df_plot) * 0.8)))
+        # Create vertical bar chart for stakeholder feedback with increased width and padding
+        fig, ax = plt.subplots(figsize=(30, max(10, len(df_plot) * 1.0)))
         
-        # Create the horizontal bar chart
-        df_plot.plot(kind='barh', ax=ax, colormap='viridis', width=0.8)
+        # Create the vertical bar chart
+        df_plot.plot(kind='bar', ax=ax, colormap='viridis', width=0.8)
         
-        # Set title and labels
-        ax.set_title(chart_title, fontsize=20, weight='bold', pad=20)
-        ax.set_xlabel("Number of Responses", fontsize=16)
-        ax.set_ylabel(report_type, fontsize=16)
+        plt.title(chart_title, fontsize=28, weight='bold', pad=20)
+        plt.xlabel("Categories", fontsize=30, labelpad=15)
+        plt.ylabel("Number of Responses", fontsize=30, labelpad=15)
         
-        # Set y-axis labels (categories) with proper wrapping - no rotation needed for horizontal
+        # Wrap long category labels for cleaner display
         wrapped_labels = [wrap_chart_labels(label, words_per_line=4) for label in df_plot.index]
-        ax.set_yticklabels(wrapped_labels, fontsize=12)
-        
-        # Set x-axis ticks - no rotation needed
-        ax.tick_params(axis='x', labelsize=12)
-        
-        # Position legend
-        ax.legend(title='Rating', fontsize=12, title_fontsize=14, loc='lower right')
-        
-        # Add grid
-        ax.grid(axis='x', linestyle='--', alpha=0.7)
-        
-        # Adjust layout
-        plt.tight_layout()
-        
+        plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=14)
+        plt.yticks(fontsize=32)
+        plt.legend(title='Rating', fontsize=24, title_fontsize=26, bbox_to_anchor=(1.02, 1), loc='upper left')
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout(pad=3.0)
+        plt.subplots_adjust(bottom=0.25, right=0.85)  # Increased bottom and right margins for better label display
     else:
-        # Create vertical bar chart for subject feedback
-        fig, ax = plt.subplots(figsize=(max(12, len(df_plot) * 1.2), 10))
-        
-        df_plot.plot(kind='bar', ax=ax, width=0.6)
-        
-        ax.set_title(chart_title, fontsize=18, weight='bold')
-        ax.set_xlabel(report_type, fontsize=16)
-        ax.set_ylabel("Number of Responses", fontsize=16)
+        ax = df_plot.plot(kind='bar', figsize=(40, 20), width=0.4)
+        # Bar labels (number of responses) are intentionally disabled for subject feedback charts
+        # Uncomment the following lines if you want to show bar labels:
+        # for bars in ax.containers:
+        #     ax.bar_label(bars, label_type='edge', fontsize=28)
+        plt.title(chart_title, fontsize=28, weight='bold')
+        plt.xlabel(report_type, fontsize=30)
+        plt.ylabel("No. of Responses", fontsize=28)
         
         # For subject feedback, use original labels with wrapping
         wrapped_labels = [wrap_chart_labels(label, words_per_line=3) for label in df_plot.index]
-        ax.set_xticklabels(wrapped_labels, rotation=45, ha='right', fontsize=12)
-        ax.tick_params(axis='y', labelsize=12)
-        
-        ax.legend(fontsize=12)
+        plt.xticks(range(len(wrapped_labels)), wrapped_labels, rotation=45, ha='right', fontsize=16)
+        plt.yticks(fontsize=32)
+        plt.legend(fontsize=24)
         plt.tight_layout()
+        plt.subplots_adjust(bottom=0.7)  # Significantly increased bottom margin for multi-line labels
 
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', report_type)
     safe_prefix = re.sub(r'[^a-zA-Z0-9_-]', '_', report_name)
     safe_filename = f"{safe_prefix}_{safe_name}.png"
 
     buffer = BytesIO()
-    plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
+    plt.savefig(buffer, format='png')
     buffer.seek(0)
 
     chart_id = fs_charts.put(
@@ -375,19 +429,28 @@ class StakeholderPDF(FPDF):
 
     def insert_image_from_mongodb(self, filename, y_margin=10):
         try:
-            chart_doc = fs_charts.find_one({"filename": filename})
-            if chart_doc:
-                self.add_page()
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    tmp.write(chart_doc.read())
-                    tmp_path = tmp.name
-                # Make chart as large as possible in PDF
-                self.image(tmp_path, x=1, y=5, w=self.w-2)
-                self.set_y(self.get_y() + self.h * 0.4)
-                os.unlink(tmp_path)
+            # First find the chart document in charts_collection
+            chart_doc = charts_collection.find_one({"filename": filename})
+            if chart_doc and 'chart_id' in chart_doc:
+                # Then retrieve the actual file from GridFS using the chart_id
+                chart_file = fs_charts.get(chart_doc['chart_id'])
+                if chart_file:
+                    self.add_page()
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                        tmp.write(chart_file.read())
+                        tmp_path = tmp.name
+                    # Make chart as large as possible in PDF
+                    self.image(tmp_path, x=1, y=5, w=self.w-2)
+                    self.set_y(self.get_y() + self.h * 0.4)
+                    os.unlink(tmp_path)
+                else:
+                    print(f"Chart file not found in GridFS for filename: {filename}")
+            else:
+                print(f"Chart document not found in collection for filename: {filename}")
         except Exception as e:
             print(f"Error inserting image from MongoDB: {e}")
+            print(f"Filename: {filename}")
 
     def add_summary(self, text):
         self.add_page()
@@ -447,21 +510,31 @@ class SubjectPDF(FPDF):
 
     def insert_image_from_mongodb(self, filename, y_margin=10):
         try:
-            chart_doc = fs_charts.find_one({"filename": filename})
-            if chart_doc:
-                self.add_page()
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    tmp.write(chart_doc.read())
-                    tmp_path = tmp.name
-                # Make chart as large as possible in PDF
-                self.image(tmp_path, x=1, y=5, w=self.w-2)
-                self.set_y(120)
-                os.unlink(tmp_path)
+            # First find the chart document in charts_collection
+            chart_doc = charts_collection.find_one({"filename": filename})
+            if chart_doc and 'chart_id' in chart_doc:
+                # Then retrieve the actual file from GridFS using the chart_id
+                chart_file = fs_charts.get(chart_doc['chart_id'])
+                if chart_file:
+                    self.add_page()
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                        tmp.write(chart_file.read())
+                        tmp_path = tmp.name
+                    # Make chart as large as possible in PDF
+                    self.image(tmp_path, x=1, y=5, w=self.w-2)
+                    self.set_y(120)
+                    os.unlink(tmp_path)
+                else:
+                    print(f"Chart file not found in GridFS for filename: {filename}")
+            else:
+                print(f"Chart document not found in collection for filename: {filename}")
         except Exception as e:
             print(f"Error inserting image from MongoDB: {e}")
+            print(f"Filename: {filename}")
 
 def generate_stakeholder_report(sub_df, name, value, category_groups, short_labels, uploaded_filename=None, report_type=None):
+    print(f"Starting stakeholder report generation for {name}: {value}")
     pdf = StakeholderPDF()
     pdf.add_page()
     # Compose heading to match view charts
@@ -477,13 +550,18 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
     pdf.ln(10)
 
     chart_files = []
+    print(f"Processing {len(category_groups)} categories")
     for category, cols in category_groups.items():
+        print(f"Processing category: {category}")
         valid_cols = [col for col in cols if col in sub_df.columns]
-        if not valid_cols: continue
+        if not valid_cols: 
+            print(f"No valid columns found for category: {category}")
+            continue
 
         # Generate summary using original column names - same for both table and chart
         summary_df = generate_summary_table(sub_df, valid_cols, short_labels, 'stakeholder')
         if not summary_df.empty:
+            print(f"Adding table for category: {category}")
             pdf.section_title(f"{category} Feedback Summary")
             pdf.table(summary_df)
             pdf.ln(10)
@@ -496,29 +574,47 @@ def generate_stakeholder_report(sub_df, name, value, category_groups, short_labe
             if str(value) and str(value).lower() not in ['all_students', 'all students']:
                 title_parts.append(str(value))
             title = " | ".join(title_parts)
+            print(f"Generating chart for category: {category}")
             chart_file = plot_ratings(summary_df, category, title, 'stakeholder')
             if chart_file:
+                print(f"Chart generated: {chart_file}")
                 chart_files.append(chart_file)
+            else:
+                print(f"Failed to generate chart for category: {category}")
         else:
             print(f"Empty summary table for category: {category}")
 
+    print(f"Adding {len(chart_files)} charts to PDF")
     for chart in chart_files:
+        print(f"Inserting chart: {chart}")
         pdf.insert_image_from_mongodb(chart)
 
     suggestion_col = next((col for col in sub_df.columns if 'suggestion' in col.lower()), None)
     if suggestion_col:
-        suggestion_summary = summarize_suggestions_with_mistral(sub_df, suggestion_col)
+        print("Adding suggestion summary")
+        suggestion_summary = summarize_suggestions_with_gemini(sub_df, suggestion_col)
         pdf.add_summary(suggestion_summary)
 
     output_dir = "feedback_catalyst"
     os.makedirs(output_dir, exist_ok=True)
     # Make output filename unique per field
     if value:
-        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type}_{report_name}_{name}_{value}")
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '', f"{report_type}{report_name}{name}{value}")
     else:
-        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type}_{report_name}")
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '', f"{report_type}{report_name}")
     pdf_path = os.path.join(output_dir, f"{safe_title}_report.pdf")
-    pdf.output(pdf_path)
+    print(f"Outputting PDF to: {pdf_path}")
+    
+    try:
+        pdf.output(pdf_path)
+        print(f"PDF generation completed: {pdf_path}")
+    except Exception as e:
+        print(f"Error during PDF generation: {e}")
+        print(f"PDF path: {pdf_path}")
+        print(f"Output directory exists: {os.path.exists(output_dir)}")
+        print(f"Output directory writable: {os.access(output_dir, os.W_OK)}")
+        raise
+    
     return pdf_path
 
 def generate_subject_report(sub_df, name, value, category_groups, short_labels, uploaded_filename=None, report_type=None):
@@ -560,7 +656,7 @@ def generate_subject_report(sub_df, name, value, category_groups, short_labels, 
     for _, chart in chart_paths:
         pdf.insert_image_from_mongodb(chart)
 
-    safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{report_type_str}_{report_name}")
+    safe_title = re.sub(r'[^a-zA-Z0-9_-]', '', f"{report_type_str}{report_name}")
     output_dir = "feedback_catalyst"
     os.makedirs(output_dir, exist_ok=True)
     pdf_path = os.path.join(output_dir, f"{safe_title}_report.pdf")
@@ -613,7 +709,6 @@ def _get_data_and_groups(file_path, feedback_type='stakeholder'):
 
     return df, category_groups, short_labels
 
-import os
 import pandas as pd
 import zipfile
 from io import BytesIO
@@ -710,7 +805,7 @@ def process_for_charts(file_path, choice, feedback_type='stakeholder', uploaded_
     return chart_files   
 
 def summarize_suggestions(df, column_name):
-    if not mistral_client:
+    if not model:
         # Fallback: join all suggestions and return first 10 lines
         suggestions = df[column_name].dropna().astype(str)
         return "\n".join(suggestions.tolist()[:10])
@@ -725,22 +820,16 @@ Feedback suggestions:
 {combined_text}
 """
     try:
-        messages = [ChatMessage(role="user", content=prompt)]
-        response = mistral_client.chat(
-            model="mistral-large-latest",
-            messages=messages,
-            max_tokens=300,
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
-        print(f"Mistral failed: {e}")
+        print(f"Gemini failed: {e}")
         return "Could not summarize suggestions due to an error."
 
-# Function to find common parts/themes using Mistral
-def find_common_themes_mistral(summaries):
-    if not mistral_client:
-        return "Mistral model not available to extract common themes."
+# Function to find common parts/themes using Gemini
+def find_common_themes_gemini(summaries):
+    if not model:
+        return "Gemini model not available to extract common themes."
 
     combined = "\n\n".join(summaries)
     prompt = f"""
@@ -754,21 +843,15 @@ Feedback Summaries:
 """
 
     try:
-        messages = [ChatMessage(role="user", content=prompt)]
-        response = mistral_client.chat(
-            model="mistral-large-latest",
-            messages=messages,
-            max_tokens=400,
-            temperature=0.2
-        )
-        return response.choices[0].message.content.strip()
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
-        print(f"Mistral failed while extracting themes: {e}")
+        print(f"Gemini failed while extracting themes: {e}")
         return "Could not extract common themes due to an error."
 
-# Function to generate implementation suggestions using Mistral
-def generate_implementation_plan_mistral(themes):
-    if not mistral_client:
+# Function to generate implementation suggestions using Gemini
+def generate_implementation_plan_gemini(themes):
+    if not model:
         return f"Model unavailable. Use these themes for implementation: {themes}"
 
     prompt = f"""
@@ -785,14 +868,18 @@ Requirements:
 """
 
     try:
-        messages = [ChatMessage(role="user", content=prompt)]
-        response = mistral_client.chat(
-            model="mistral-large-latest",
-            messages=messages,
-            max_tokens=300,
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
-        print(f"Mistral failed while generating implementation plan: {e}")
+        print(f"Gemini failed while generating implementation plan: {e}")
         return "Could not generate implementation plan due to an error."
+
+def clear_chart_cache():
+    """Clear all cached charts from MongoDB"""
+    try:
+        charts_collection.delete_many({})
+        print("Chart cache cleared successfully")
+        return True
+    except Exception as e:
+        print(f"Error clearing chart cache: {e}")
+        return False

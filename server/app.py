@@ -1,8 +1,13 @@
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import os, pandas as pd
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # Updated imports to match the actual function names in feedback_processor.py
-from feedback_processor import process_feedback, process_for_charts, summarize_suggestions, generate_implementation_plan_mistral, find_common_themes_mistral
+from feedback_processor import process_feedback, process_for_charts, summarize_suggestions, generate_implementation_plan_gemini, find_common_themes_gemini, clear_chart_cache
 import matplotlib.pyplot as plt
 import re
 from database import client, db, files_collection, charts_collection, fs_files, fs_charts
@@ -10,6 +15,7 @@ from io import BytesIO
 import tempfile
 from flask import url_for  
 import zipfile
+from feedback_processor import sanitize_text
 
 
 app = Flask(__name__)
@@ -171,8 +177,9 @@ def generate_report():
 
 @app.route('/api/generate-stakeholder-report', methods=['POST'])
 def generate_stakeholder_report():
+    print("Starting stakeholder report generation...")
     files = request.files.getlist('file')  # Accept multiple files
-    print(f"Received files for report generation", files)  # Add logging
+    print(f"Received files for report generation: {len(files)} files")
     choice = request.form.get('choice')
     report_type = request.form.get('reportType', None)
     uploaded_filenames = request.form.get('uploadedFilenames', None)
@@ -193,7 +200,9 @@ def generate_stakeholder_report():
                 except Exception:
                     filenames = []
             output_pdfs = []
+            print(f"Processing {len(files)} files...")
             for idx, file in enumerate(files):
+                print(f"Processing file {idx + 1}/{len(files)}: {file.filename}")
                 fname = filenames[idx] if idx < len(filenames) else file.filename
                 pdf_zip = process_feedback(
                     file_bytes=file.stream,
@@ -203,14 +212,17 @@ def generate_stakeholder_report():
                     uploaded_filename=fname,
                     report_type=report_type
                 )
+                print(f"File {idx + 1} processed successfully")
                 with zipfile.ZipFile(pdf_zip, 'r') as zf:
                     for name in zf.namelist():
                         output_pdfs.append((name, zf.read(name)))
+            print("Creating final zip file...")
             final_zip = BytesIO()
             with zipfile.ZipFile(final_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 for name, data in output_pdfs:
                     zipf.writestr(name, data)
             final_zip.seek(0)
+            print("Report generation completed successfully")
             return send_file(
                 final_zip,
                 as_attachment=True,
@@ -220,6 +232,7 @@ def generate_stakeholder_report():
         else:
             return jsonify({"error": "No files uploaded"}), 400
     except Exception as e:
+        print(f"Error in stakeholder report generation: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/generate-charts', methods=['POST'])
@@ -341,8 +354,8 @@ def get_suggestions():
 
             # Get common themes and implementation plan using Mistral (updated function names)
             all_summary_texts = [summary for _, summary in suggestions]
-            common_themes = find_common_themes_mistral(all_summary_texts)
-            implementation_plan = generate_implementation_plan_mistral(common_themes)
+            common_themes = find_common_themes_gemini(all_summary_texts)
+            implementation_plan = generate_implementation_plan_gemini(common_themes)
 
         else:
             # Single file upload (non-stakeholder or fallback)
@@ -355,7 +368,7 @@ def get_suggestions():
                 suggestions.append((filename, summary))
 
                 # Generate implementation plan even for single summary (updated function name)
-                implementation_plan = generate_implementation_plan_mistral(summary)
+                implementation_plan = generate_implementation_plan_gemini(summary)
             else:
                 implementation_plan = None
 
@@ -366,41 +379,58 @@ def get_suggestions():
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=14)
-        pdf.cell(0, 10, "Suggestions Summary", ln=True, align='C')
+        pdf.cell(0, 10, sanitize_text("Suggestions Summary"), ln=True, align='C')
         pdf.ln(10)
 
         for fname, summary in suggestions:
             pdf.set_font("Arial", style='B', size=12)
-            pdf.cell(0, 10, f"File: {fname}", ln=True)
+            pdf.cell(0, 10, sanitize_text(f"File: {fname}"), ln=True)
             pdf.set_font("Arial", size=11)
             for line in summary.split('\n'):
-                pdf.multi_cell(0, 8, line)
+                pdf.multi_cell(0, 8, sanitize_text(line))
             pdf.ln(5)
 
-        # # Stakeholder common themes
-        # if common_themes:
-        #     pdf.set_font("Arial", style='B', size=12)
-        #     pdf.cell(0, 10, "Common Themes Across All Files:", ln=True)
-        #     pdf.set_font("Arial", size=11)
-        #     for line in common_themes.split('\n'):
-        #         pdf.multi_cell(0, 8, line)
-        #     pdf.ln(5)
+        # Stakeholder common themes
+        if common_themes:
+            pdf.set_font("Arial", style='B', size=12)
+            pdf.cell(0, 10, sanitize_text("Common Themes Across All Files:"), ln=True)
+            pdf.set_font("Arial", size=11)
+            for line in common_themes.split('\n'):
+                pdf.multi_cell(0, 8, sanitize_text(line))
+            pdf.ln(5)
 
         # Implementation plan (always included if generated)
         if implementation_plan:
             pdf.set_font("Arial", style='B', size=12)
-            pdf.cell(0, 10, "Suggested Implementation Plan:", ln=True)
+            pdf.cell(0, 10, sanitize_text("Suggested Implementation Plan:"), ln=True)
             pdf.set_font("Arial", size=11)
             for line in implementation_plan.split('\n'):
-                pdf.multi_cell(0, 8, line)
+                pdf.multi_cell(0, 8, sanitize_text(line))
             pdf.ln(10)
 
-        # Output to buffer
-        pdf_bytes = pdf.output(dest='S').encode('latin1')
+        # Output to buffer with proper encoding
+        try:
+            pdf_bytes = pdf.output(dest='S').encode('latin1')
+        except UnicodeEncodeError:
+            # Fallback: try with replacement
+            pdf_bytes = pdf.output(dest='S').encode('latin1', 'replace')
+        
         pdf_buffer = BytesIO(pdf_bytes)
         pdf_buffer.seek(0)
 
         return send_file(pdf_buffer, as_attachment=True, download_name="Suggestions_Summary.pdf", mimetype="application/pdf")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/clear-chart-cache', methods=['POST'])
+def clear_cache():
+    """Clear the chart cache to force regeneration of charts"""
+    try:
+        success = clear_chart_cache()
+        if success:
+            return jsonify({"message": "Chart cache cleared successfully"}), 200
+        else:
+            return jsonify({"error": "Failed to clear chart cache"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
