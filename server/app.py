@@ -2,6 +2,11 @@ from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import os, pandas as pd
 from dotenv import load_dotenv
+import logging
+
+# Configure logging for production
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,6 +25,11 @@ from feedback_processor import sanitize_text
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Health check endpoint for Render
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy", "message": "Server is running"}), 200
 
 def sanitize_filename(name):
     return re.sub(r'[^A-Za-z0-9_]+', '_', name)
@@ -436,4 +446,5 @@ def clear_cache():
 
         
 if __name__ == '__main__':
-    app.run(port=5001, debug=True)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=False)

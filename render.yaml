@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: feedback-catalyst-server
+    env: python
+    buildCommand: pip install -r server/requirements.txt
+    startCommand: cd server && python app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MONGO_URI
+        sync: false
