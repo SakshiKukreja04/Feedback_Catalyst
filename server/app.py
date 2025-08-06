@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os, pandas as pd
 from dotenv import load_dotenv
 import logging
+import psutil
 
 # Configure logging for production
 logging.basicConfig(level=logging.INFO)
@@ -28,9 +29,11 @@ app = Flask(__name__)
 # Get frontend URL from environment variable with fallback for development
 frontend_url = os.environ.get("VITE_FRONTEND_BASE_URL")
 if frontend_url:
+    print(f"🔧 CORS configured for frontend URL: {frontend_url}")
     CORS(app, resources={r"/*": {"origins": [frontend_url]}})
 else:
     # Fallback to "*" only in development mode
+    print("🔧 CORS configured for all origins (development mode)")
     CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Health check endpoint for Render
@@ -40,6 +43,14 @@ def health_check():
 
 def sanitize_filename(name):
     return re.sub(r'[^A-Za-z0-9_]+', '_', name)
+
+def log_memory_usage(stage=""):
+    """Log current memory usage for debugging"""
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+    print(f"🧠 Memory usage {stage}: {memory_mb:.2f} MB")
+    return memory_mb
 
 # 1) Upload an Excel/CSV and store in MongoDB GridFS
 @app.route('/upload', methods=['POST'])
@@ -142,27 +153,37 @@ def generate_report():
                     filenames = list(eval(uploaded_filenames))
                 except Exception:
                     filenames = []
-            output_pdfs = []
-            for idx, file in enumerate(files):
-                fname = filenames[idx] if idx < len(filenames) else file.filename
-                pdf_zip = process_feedback(
-                    file_bytes=file.stream,
-                    filename=file.filename,
-                    choice=choice,
-                    feedback_type=feedback_type,
-                    uploaded_filename=fname,
-                    report_type=report_type
-                )
-                # pdf_zip is a BytesIO zip with one or more PDFs inside
-                # Extract PDFs from this zip and add to output_pdfs
-                with zipfile.ZipFile(pdf_zip, 'r') as zf:
-                    for name in zf.namelist():
-                        output_pdfs.append((name, zf.read(name)))
-            # Bundle all PDFs into a single ZIP
+            
+            # Memory optimization: Process files one by one and stream to final zip
             final_zip = BytesIO()
             with zipfile.ZipFile(final_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for name, data in output_pdfs:
-                    zipf.writestr(name, data)
+                for idx, file in enumerate(files):
+                    fname = filenames[idx] if idx < len(filenames) else file.filename
+                    try:
+                        pdf_zip = process_feedback(
+                            file_bytes=file.stream,
+                            filename=file.filename,
+                            choice=choice,
+                            feedback_type=feedback_type,
+                            uploaded_filename=fname,
+                            report_type=report_type
+                        )
+                        # Extract PDFs from this zip and add to final zip immediately
+                        with zipfile.ZipFile(pdf_zip, 'r') as zf:
+                            for name in zf.namelist():
+                                pdf_data = zf.read(name)
+                                zipf.writestr(name, pdf_data)
+                                del pdf_data  # Free memory immediately
+                        
+                        # Clear the pdf_zip from memory
+                        pdf_zip.close()
+                        del pdf_zip
+                        
+                    except Exception as file_error:
+                        print(f"Error processing file {file.filename}: {file_error}")
+                        # Continue with other files instead of failing completely
+                        continue
+            
             final_zip.seek(0)
             return send_file(
                 final_zip,
@@ -195,6 +216,7 @@ def generate_report():
 @app.route('/api/generate-stakeholder-report', methods=['POST'])
 def generate_stakeholder_report():
     print("Starting stakeholder report generation...")
+    log_memory_usage("at start")
     files = request.files.getlist('file')  # Accept multiple files
     print(f"Received files for report generation: {len(files)} files")
     choice = request.form.get('choice')
@@ -216,29 +238,47 @@ def generate_stakeholder_report():
                     filenames = list(eval(uploaded_filenames))
                 except Exception:
                     filenames = []
-            output_pdfs = []
+            
+            # Memory optimization: Process files one by one and stream to final zip
             print(f"Processing {len(files)} files...")
-            for idx, file in enumerate(files):
-                print(f"Processing file {idx + 1}/{len(files)}: {file.filename}")
-                fname = filenames[idx] if idx < len(filenames) else file.filename
-                pdf_zip = process_feedback(
-                    file_bytes=file.stream,
-                    filename=file.filename,
-                    choice=choice,
-                    feedback_type=feedback_type,
-                    uploaded_filename=fname,
-                    report_type=report_type
-                )
-                print(f"File {idx + 1} processed successfully")
-                with zipfile.ZipFile(pdf_zip, 'r') as zf:
-                    for name in zf.namelist():
-                        output_pdfs.append((name, zf.read(name)))
-            print("Creating final zip file...")
             final_zip = BytesIO()
+            
             with zipfile.ZipFile(final_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for name, data in output_pdfs:
-                    zipf.writestr(name, data)
+                for idx, file in enumerate(files):
+                    print(f"Processing file {idx + 1}/{len(files)}: {file.filename}")
+                    log_memory_usage(f"before file {idx + 1}")
+                    fname = filenames[idx] if idx < len(filenames) else file.filename
+                    
+                    try:
+                        pdf_zip = process_feedback(
+                            file_bytes=file.stream,
+                            filename=file.filename,
+                            choice=choice,
+                            feedback_type=feedback_type,
+                            uploaded_filename=fname,
+                            report_type=report_type
+                        )
+                        print(f"File {idx + 1} processed successfully")
+                        
+                        # Extract and add PDFs to final zip immediately to save memory
+                        with zipfile.ZipFile(pdf_zip, 'r') as zf:
+                            for name in zf.namelist():
+                                pdf_data = zf.read(name)
+                                zipf.writestr(name, pdf_data)
+                                del pdf_data  # Free memory immediately
+                        
+                        # Clear the pdf_zip from memory
+                        pdf_zip.close()
+                        del pdf_zip
+                        log_memory_usage(f"after file {idx + 1}")
+                        
+                    except Exception as file_error:
+                        print(f"Error processing file {file.filename}: {file_error}")
+                        # Continue with other files instead of failing completely
+                        continue
+            
             final_zip.seek(0)
+            log_memory_usage("at completion")
             print("Report generation completed successfully")
             return send_file(
                 final_zip,
