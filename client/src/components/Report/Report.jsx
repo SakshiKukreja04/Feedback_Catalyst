@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { API_ENDPOINTS } from '../../config/api';
 import './Report.css';
 
 const Report = () => {
@@ -49,7 +50,7 @@ const Report = () => {
         const baseFilename = file.name.split(/[/\\]/).pop();
         const formData = new FormData();
         formData.append('file', file);
-        const uploadResponse = await fetch('http://localhost:5001/upload', {
+        const uploadResponse = await fetch(API_ENDPOINTS.UPLOAD_FILE, {
           method: 'POST',
           body: formData,
         });
@@ -60,7 +61,7 @@ const Report = () => {
         const uploadData = await uploadResponse.json();
         filenames.push(baseFilename);
         // Get headers for each file using base filename
-        const headersResponse = await fetch(`http://localhost:5001/headers/${encodeURIComponent(baseFilename)}`);
+        const headersResponse = await fetch(`${API_ENDPOINTS.GET_HEADERS}/${encodeURIComponent(baseFilename)}`);
         if (!headersResponse.ok) {
           const errorText = await headersResponse.text();
           throw new Error(`Failed to get headers (Status: ${headersResponse.status}): ${errorText}`);
@@ -112,7 +113,7 @@ const Report = () => {
       formData.append('feedbackType', feedbackType);
       formData.append('reportType', reportType);
 
-      const endpoint = (feedbackType === 'stakeholder') ? 'http://localhost:5001/api/generate-stakeholder-report' : 'http://localhost:5001/generate-report';
+      const endpoint = (feedbackType === 'stakeholder') ? API_ENDPOINTS.GENERATE_STAKEHOLDER_REPORT : API_ENDPOINTS.GENERATE_REPORT;
       const response = await fetch(endpoint, {
         method: 'POST',
         body: formData,
@@ -166,7 +167,7 @@ const Report = () => {
         formData.append('uploadedFilename', uploadedFilename.replace(/\.[^/.]+$/, ""));
         formData.append('reportType', reportType);
 
-        const response = await fetch('http://localhost:5001/generate-charts', {
+        const response = await fetch(API_ENDPOINTS.GENERATE_CHARTS, {
             method: 'POST',
             body: formData,
         });
@@ -207,7 +208,7 @@ const Report = () => {
       }
       formData.append('feedbackType', feedbackType);
 
-      const response = await fetch('http://localhost:5001/get-suggestions', {
+      const response = await fetch(API_ENDPOINTS.GET_SUGGESTIONS, {
         method: 'POST',
         body: formData,
       });
@@ -283,8 +284,6 @@ const Report = () => {
             accept=".csv,.xlsx"
             style={{ display: 'none' }}
             multiple={feedbackType === 'stakeholder'}
-            webkitdirectory={feedbackType === 'stakeholder' ? '' : undefined}
-            directory={feedbackType === 'stakeholder' ? '' : undefined}
           />
           <p className="file-types">Supports .csv and .xlsx formats (max 5MB)</p>
           {uploadStatus && (
