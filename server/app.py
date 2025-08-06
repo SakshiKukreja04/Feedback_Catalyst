@@ -24,7 +24,14 @@ from feedback_processor import sanitize_text
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Get frontend URL from environment variable with fallback for development
+frontend_url = os.environ.get("VITE_FRONTEND_BASE_URL")
+if frontend_url:
+    CORS(app, resources={r"/*": {"origins": [frontend_url]}})
+else:
+    # Fallback to "*" only in development mode
+    CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Health check endpoint for Render
 @app.route('/health', methods=['GET'])
